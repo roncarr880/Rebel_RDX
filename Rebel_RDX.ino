@@ -1,12 +1,30 @@
 
+//!!!! to do list
+//  fix the paddles code to use the new mode A, B, ULT code
+//  add  median code
+// freq on LED's seems to be incorrect.  A step delayed.  It is called before the thun tdec values are updated.
+//   think they should not be calculated in loop but somewhere else, maybe before the call to display
+
+
 /* uno32 program for the TenTec REBEL with some hardware mods */
 
 // This program allows the Rebel to operate in CW, RTTY, WSPR, PSK31 modes with a simple terminal program,
 // or in FT8, FT4, JS8  modes with the appropriate program running on a computer.
 
-/* before using: */
-/* change the call sign in the CQ message */
-/* change the WSPR message before transmitting WSPR */
+/* 
+ Important - before using: 
+ change the call sign in the CQ message 
+ change the WSPR message before transmitting WSPR
+*/
+
+/*
+ * The program is written to use either no display or a Nokia display.  
+ * If you have an I2C display or 2 line LCD you can move the FT8 routines into your sketch.
+ * Look for digi_core(), ft8_tx(), wspr_to_freq(), digi_setup() and how they are called.
+ * You will also need CAT control code or some other way to key the transmitter.  
+ * And watch for analog reads in your main code, they will probably need to be
+ * guarded from interrupts with noInterrupts(), interrupts()
+ */
 
 
 /* by K1URC */
@@ -18,13 +36,8 @@ Hardware mods:
 
 DIGI modes, FT8, JS8, FT4 etc:
 
- If you don't have the Nokia display, or are not interested in the audio band scope and the CW, RTTY, PSK31 etc decoders then the
- easiest mod will be to connect the DAH input via 1k and .1uf in series to the center of the CW speed pot, center the POT and
- change the #define for FT8_PIN below to be A7.
-
- If you have the Nokia display and have done the below code_read mod to have all the normal features, then since the previous coderead
- input ( A6 ) is now unused, remove C99, add a resistor divider of 10k 10k between +3 and ground.  The center of the divider connects 
- to A6 and the DAH input is also connected to A6 via a 1k and .1uf in series.  #define FT8_PIN to be A6.
+Pin A11 is unused.   Wire a voltage divider of 10k 10k from +3v to ground.  The center tap goes to pin A11.  Connect a 1k resistor and 
+a capacitor( about 1.0 uf )  in series from pin 33 ( DAH ) to pin A11.  plus side of cap towards resistor and pin 33.
 
 Morse decoder:
  The code read function has been changed to the cw speed pot.  The center of the pot is connected to the output
@@ -33,9 +46,9 @@ Morse decoder:
  If this mod is not done, the code read function and band scope will not work.  All else will be ok.
 
  With the code read mod and the below mod, the program will send and receive PSK31, tuning is fairly critical.
- Psk31 is not so popular now so ignore this mod if you wish.
+
  
- PSK31 AM modulator:
+ PSK31 AM modulator:  only needed for PSK31 transmit or low power WSPR beacon.
                                            /
  0----------\/\/\/\/----------0-----------0  0------------- to center of R21 the Final FET Bias Pot
  pin 4       Ra               |                             you can wire this on the top of the board
@@ -106,7 +119,7 @@ Morse decoder:
 
      
 The basic idea of this program for the rebel is it can be used portable without the display, or used in the 
-shack with the display and computer control.  The default is currently field mode with battery saving 80 ma current.
+shack with the display and computer control.  The default is field mode with battery saving 80 ma current.
 On startup, the mode menu will display and one can easily change to display mode when in the shack.
 
   
@@ -115,7 +128,8 @@ On startup, the mode menu will display and one can easily change to display mode
 // Startup with Nokia display, select the display, follow the menus.
 
 // Without a display, compile in the defaults you want/need.
-// Startup without a display, Tap select to exit the menu's you can't see. To enter FT8 DIGI modes, change the function
+// Startup without a display, Power up, pause 10 seconds.
+// Tap select to exit the menu's you can't see. To enter FT8 DIGI modes, change the function
 // to BW.  Long press Select.
 
 // FT8 DIGI modes use the TenTec Argonaut V CAT control.  Use CAT for transmit control.
@@ -127,12 +141,8 @@ On startup, the mode menu will display and one can easily change to display mode
 #include "varicode1.h"
 #include "fec_table.h"
 
-#define CODEREAD_PIN A7  // if you have the nokia display, the coderead mod and the 2nd choice FT8 mod, use these two defines
-#define FT8_PIN A6       // full featured radio with both mods
-
-// else if you have the easy FT8 mod, use these two defines and comment out the above two
-// #define CODEREAD_PIN A6
-// #define FT8_PIN A7        // the cw-speed pot repurposed for FT8 audio
+#define FT8_PIN A11       
+#define CODEREAD_PIN A7      // code read moved from CODE_READ to the cw-speed pot with the hardware mod. Else code_read is A6.
 
 
 // two CAT control implimentations are offered.  TenTec has fewer if any bugs.  K3 is not so robust.
@@ -189,8 +199,8 @@ int serial_decode = 0;    // when enabled sends the decoded morse or rtty on the
 #define JUMPERS 0
 #define TWO_BAND 1
 #define FOUR_BAND 2
-int band_switch = FOUR_BAND;    // type of  band switch module installed
-                                // you probably will want to change this to TWO_BAND if you have a relay module.
+int band_switch = TWO_BAND;    // type of  band switch module installed ( or just the jumpers if none )
+
 
 int cut_num_enable = 0;   // cut_num_enable = 1 may be useful for when using the radio without a display
                           // when enabled each change of 10 khz is announced in morse
@@ -236,6 +246,8 @@ const int sliding_offset_enable = 0;   // The offset changes via RIT control, pe
 int wpm = 14;
 
 #define TUNE_LED_DISP 1     // show freq on LED's even if have a Nokia display
+#define MENU_TIMEOUT  35    // a long timeout is good for WSPR beacon setup, a short timeout, maybe 5,  would be good for a 
+                            // radio with no display
 
 /****************   End of user options and default values - remember can always change in menu at runtime  *****************/
 
@@ -426,6 +438,7 @@ int sleds[] = {0,SGRN,SYEL,SRED,SGRN+SYEL,SGRN+SRED,SYEL+SRED,SGRN+SYEL+SRED}; /
 int sw_state[2] = {NOTACTIVE,NOTACTIVE};   /* state of the two switches */
 
 
+   // the standalone wspr beacon keeps time by tuning the radio to WWV and detecting the 1khz tone at the beginning of the minute.
 int wspr_duty = 0;        // good idea to start at zero so tx doesn't take off when unwanted
 int wspr_tx_enable = 0;   // tx this next 2 minute interval flag
 int wspr_wwv = 3;         // different message depending upon how long ago wwv was successfully found
@@ -442,7 +455,7 @@ int fun_selected[]  = {2,1,0};
 int function = 2;   /* start out in user - menu */
 
 unsigned long tx_vfo,rx_vfo;
-unsigned long tuning_rate;
+long tuning_rate;
 unsigned long listen_vfo;
 int rit_offset = 0;
 
@@ -476,14 +489,14 @@ int  split = 0;
    freq display in LED - turns on when tuning, off after a delay
    display the 100khz and 10khz digits  or the 10khz and 1khz digits depending upon step size
    digits 8 and 9 are displayed in the 3 LED's by dimming the Yellow and Red for 8 and Yellow for 9
-   this only runs when no display is selected in the menu's ( what I am calling field mode )
+   this only runs when no display is selected or if a define is set to 1
 */
 
 
 unsigned char user[8] = {0,0,0,0,0,0,0,0};   /* user flags  */
 
 /* announce and beacon buffer - set msb on characters to key xmit */
-#define ANNOUNCE_WPM 20     /* hardcoded  */
+#define ANNOUNCE_WPM 18      /* hardcoded  */
 #define TXQUESIZE 128        /* must be power of two */
 unsigned char  tx_queue[TXQUESIZE];
 int tx_in= 0;
@@ -492,11 +505,12 @@ int tx_state= 0;
 int autotx_timer= 0;
 
 #define STQUESIZE 128
-unsigned char stg_buf[STQUESIZE];  /* stage buffer to avoid blocking on serial writes */
+unsigned char stg_buf[STQUESIZE];  /* stage buffer to avoid blocking on serial writes.  Arduino may not block, MPIDE did */
 int stg_in = 0;
 int stg_out = 0;
 
 
+// freqency is announced with cut numbers.
 unsigned char cut_numbers[] = 
 { 0b11000000, 0b01000000, 0b00100000, 0b00010000, 0b00001000, 0b00000100, 0b10000100, 0b10001000, 0b10010000, 0b10100000 };
 
@@ -559,7 +573,7 @@ int sliding_offset;
 
 // flags to modify what the tuning knob does
 int wpm_adjust = 0;        /* code speed adjust using the tuning knob */
-int contrast_adjust = 0;  /* nokia adjustment on the tuning knob */
+//int contrast_adjust = 0;  /* nokia adjustment on the tuning knob */
 int top_active= 0;       /* top menu on the tuning knob */
 //int select_macro= 0;     /* selecting a macro on the tuning knob */
 
@@ -578,7 +592,7 @@ extern unsigned char BigNumbers[];
 //#define MACRO_D 6
 
 int nokia = NO_DISPLAY;  // must be zero the first time we put up the menu as the dsp_core isn't running - otherwise weird bug
-int contrast = 65;
+int contrast = 70;       // 65
 int timeout_ok = 0;
 int save_nokia;           // save display setting when change to contrast or keyer speed screen
 int nokia_s_inhibit= 0;   // separate nokia s meter from the LED s meter
@@ -652,6 +666,7 @@ int shi5;     /* an attempt to extend the high speed decode above the designed 3
 /* analogRead does not look re-entrant, so we are reading all analog values in the same core function and storing the 
    results in these global values for general use.  In battery saver mode the core function is disabled so
    in that case each analog routine will need to read the pin and refresh the global value */
+// changed how this works: added interrupt guarding to the analog reads so FT8 will work without a display   
 int rit_value, power_value, battery_value, smeter_value;
 int smeter_value2;     // dsp s meter
 
@@ -1043,7 +1058,13 @@ int x;
 char buf[35];
 long rc,tx;        // rc ? rx and tx look so alike with this font
 
-
+    rc = listen_vfo;       // for CW show the frequecy with the offset
+    if( mode == CW )  rc = rc + (( sideband == USB ) ? mode_offset : - mode_offset);
+    
+    tdec = (rc / 10000) % 10;
+    tunits = (rc / 1000 ) % 10;
+    thun = (rc / 100000) % 10;
+           
    /* change the tuning LED display if the tuning rate is 10 K ( units will not ever change ) */
    if( nokia == NO_DISPLAY || TUNE_LED_DISP ){  /* show tuning in LED's when display is off */
       if( tuning_rate == 10000 ){ /* display thun and tdec */
@@ -1064,7 +1085,7 @@ long rc,tx;        // rc ? rx and tx look so alike with this font
    tx = tx_vfo;
    
    // change the display for CW mode when bandwidth is not wide.  Else we are showing the SSB carrier freq
-   if( mode == CW && fun_selected[0] != WIDE ){
+   if( mode == CW  /*&& fun_selected[0] != WIDE */ ){
       rc = rx_vfo + (( sideband == USB ) ? mode_offset : - mode_offset);
       tx = tx_vfo + (( sideband == USB ) ? mode_offset : - mode_offset);
    } 
@@ -1201,13 +1222,13 @@ int i;
   if( fun < TAP ) return 0;
   
   tprotect = 0;   /* function button resets the tx timeout protection */ 
-  if( (wpm_adjust || contrast_adjust) && nokia ){
+  if( (wpm_adjust ) && nokia ){
      nokia = save_nokia;
      LCD.clrScr();
      update_frequency(DISPLAY_UPDATE);
   }
   wpm_adjust = 0;  /* function button turns off code speed adjust routine */
-  contrast_adjust = 0;
+  // contrast_adjust = 0;
 
   /*
   if( select_macro ){
@@ -1492,8 +1513,8 @@ int sel;
 
   switch( function ){   // always display the correct long press help
     case 0:
-         if( mode < WSPR ) lcd_puts("Macros");   // tx marco strings 
-         else lcd_puts("DspCon");    /* long press on BW is contrast adjustment */
+         if( mode < WSPR ) lcd_puts(" Digi "); 
+         else lcd_puts(" Digi ");
     break;
     case 1:
          lcd_puts("KeySpd");    /* keyer speed */
@@ -2853,12 +2874,12 @@ float tone2;
            else encoder(); 
         break; 
         case 3:     /* cut number announce  and general freq display */         
-             tdec = (listen_vfo / 10000) % 10;
-             tunits = (listen_vfo / 1000 ) % 10;
+            // tdec = (listen_vfo / 10000) % 10;
+            // tunits = (listen_vfo / 1000 ) % 10;
              if( tdec != freq_decade ){
                 freq_decade= tdec;
                 /* calc the 100khz number also for the LED freq display */
-                thun = (listen_vfo / 100000) % 10;
+             //   thun = (listen_vfo / 100000) % 10;
                 if( cut_num_enable && tx_state == 0  && autotx_timer == 0 && user[DISPLAY] == 0
                     && tuning_rate != 10000) auto_tx( cut_numbers[tdec] );
                // tuning_display();   /* power up sticky in LED's, else not needed */
@@ -3624,7 +3645,9 @@ int val;
 static int duty;
 char buf[35];
 
-   if( user[DISPLAY] == 0 ) battery_value = analogRead( BATTERYCHK );  // battery saver mode
+   noInterrupts();  battery_value = analogRead( BATTERYCHK );  interrupts();
+   //if( user[DISPLAY] == 0 ) battery_value = analogRead( BATTERYCHK );  // battery saver mode
+   
    bat = battery_value * 10;   /* scaling up by 10 */
    volts = bat/62;
    volts += 7;          /* add in drop due to 1N4007 protection diode */
@@ -3675,7 +3698,8 @@ static int s_cal[12] = {71,72,73,74,76,80,88,104,136,168,222,348};
    }
    
    if( user[DISPLAY] == 0 ){
-      smeter_value = analogRead( SIGNAL );   //battery saver mode 
+      noInterrupts();  smeter_value = analogRead( SIGNAL );  interrupts();
+      //smeter_value = analogRead( SIGNAL );   //battery saver mode 
       sig = smeter_value;
       for( val= 0; val < 12; ++val ){
         if( sig <= s_cal[val] ) break;
@@ -4230,7 +4254,12 @@ char cmd2;
         if( mode != HELL )  attachCoreTimerService( feld_hell_core );
         mode= HELL;
         loadbuffer();
-     break;     
+     break;
+     case '0': 
+        transmit(OFF); 
+        update_frequency(NO_DISPLAY_UPDATE);
+     break;
+     case '1':  transmit(ON);  break;
    }
 
 }
@@ -4541,7 +4570,8 @@ int i,bar;
 static int peak_pwr;   // for power warn avoid false low during key up times
 
    led_on_timer = 600;
-   if( user[DISPLAY] == 0 ) power_value = analogRead(POWEROUT);  // battery saver mode
+   noInterrupts();  power_value = analogRead( POWEROUT );  interrupts();
+   //if( user[DISPLAY] == 0 ) power_value = analogRead(POWEROUT);  // battery saver mode
 
    if( power_value > peak_pwr ) peak_pwr = power_value;
    else --peak_pwr;
@@ -4659,23 +4689,23 @@ static float fract;
            float spread = (float)( data - last );       // last is always negative here
            fract = ( (float)(data)/spread );
            tone_ -= fract;                              // subract the amount we went past zero cross this time
-           tone_ = 10000.0f / tone_;
+           tone_ = 12000.0f / tone_;
            tone_available = 1;
            counts = 0;     
   }
   last = data;
 
-  return timer + CORE_TICK_RATE/10;                            // 10k sample rate
+  return timer + CORE_TICK_RATE/12;                            // 12k sample rate
   
 }
 
 
 /*  core timer function for fft processing */
-/*  calculate the value to return as period in us * 40 */
+/*  calculate the value to return as period in us * 40, or 40000000/freq */
 /*  freq 6400 is period 156.25 us */
 /*  for psk31 and rtty the freq is 4000 */
 uint32_t dsp_core( uint32_t timer ){
-static int counter;
+//static int counter;
 static long w0,w1,w2;
 static int dcnt;
 long sample;
@@ -4724,13 +4754,13 @@ long sample;
   // else if( transmitting && mode == WSPR ) LATFINV = PSK_MOD; // 50 percent low power for wspr
    
 
-   ++counter;
-   switch( counter & 0x1f ){
-      case 0:  rit_value = analogRead( RIT_PIN ); break;
-      case 8:  power_value = analogRead( POWEROUT ); break;
-      case 16: battery_value = analogRead( BATTERYCHK ); break;
-     // case 24: smeter_value = analogRead( SIGNAL ); break;
-   }
+  // ++counter;
+  // switch( counter & 0x1f ){
+  //    case 0:  rit_value = analogRead( RIT_PIN ); break;
+  //    case 8:  power_value = analogRead( POWEROUT ); break;
+  //    case 16: battery_value = analogRead( BATTERYCHK ); break;
+  //   // case 24: smeter_value = analogRead( SIGNAL ); break;
+  // }
 
    //jt_time = 4;      // get or send 4 * 6400 characters per second on serial line
    
@@ -5306,7 +5336,7 @@ int i;
 int top_menu2(int def_val, struct MENU *m){     // return the menu selection values 
 
 int old_val;
-int counter = 3500;
+int counter = 100 * MENU_TIMEOUT;
 
   old_val= def_val;
   LCD.clrScr(); 
@@ -5324,9 +5354,9 @@ int counter = 3500;
      if( def_val != old_val){
        old_val= def_val;
        show_menu(def_val,m);            // show the new highlighted value 
-       counter = 3500;
+       counter = 100 * MENU_TIMEOUT;
      }
-     if( --counter == 0 ) break;     /* timeout in 35 seconds if operator is asleep */
+     if( --counter == 0 ) break;     /* timeout in NN seconds if operator is asleep */
      if( read_buttons() ) break;    /* push select or function to make a choice */     
   }
   
@@ -5580,10 +5610,10 @@ int val;
 
 int encoder(){        /* elmer 160 algorithm for gray code encoder */
 int temp,i;
-long update;
+long update_;
 long mod;
 
-    if( user[LOCK] && contrast_adjust == 0 && wpm_adjust == 0 && top_active == 0 && mem_tune == 0 ) return 0;   /* frequency locked */
+    if( user[LOCK] && wpm_adjust == 0 && top_active == 0 && mem_tune == 0 ) return 0;   /* frequency locked */
 
     /*  read encoder */
     temp= read_encoder();
@@ -5591,17 +5621,17 @@ long mod;
        i= (( en_lval << 1 ) ^ temp ) & 2;     /* get direction */
        en_lval= temp;
        if( i == en_dir ){                     /* same direction as last time */
-           update = ( en_dir ) ? tuning_rate : -tuning_rate;
+           update_ = ( en_dir ) ? tuning_rate : -tuning_rate;
 
            /* alternate encoder function - top menu or macro's.  In Fax mode unlock to tune around */
            if( top_active /*|| select_macro*/ || ( mem_tune && user[LOCK] ) ){
-             if( update > 0 ) return 1;
+             if( update_ > 0 ) return 1;
              else return -1; 
            }
            
            /* alternate encoder function - code speed adjust */
            if( wpm_adjust ){
-             if( update > 0 ) ++wpm;
+             if( update_ > 0 ) ++wpm;
              else --wpm;
              
              if( wpm < 10 ) wpm = 10;   /* limits of the adjustment */
@@ -5613,7 +5643,7 @@ long mod;
 
            /* alternate encoder function - contrast adjust 
            if( contrast_adjust ){
-             if( update > 0 ) ++contrast;
+             if( update_ > 0 ) ++contrast;
              else --contrast;
              
              if( contrast < 50 ) contrast = 50;   /* limits of the adjustment 
@@ -5625,17 +5655,18 @@ long mod;
            
            /* round freq to the tuning rate */
            mod = listen_vfo % tuning_rate;
-           if( mod && update < 0) update = -mod;
-           else if( mod && update > 0 ) update = tuning_rate - mod;
+           if( mod && update_ < 0) update_ = -mod;
+           else if( mod && update_ > 0 ) update_ = tuning_rate - mod;
            
           // if( mode == JT65 ){    // forcing split and lock step tuning of tx and rx when in JT mode
-          //    rx_vfo += update;
-          //    tx_vfo += update;
+          //    rx_vfo += update_;
+          //    tx_vfo += update_;
           // }
-           else switch( split ){
-              case 0: tx_vfo = rx_vfo = rx_vfo + update;  break;    /* normal */
-              case 1: rx_vfo += update; break;                      /* tx freq fixed, changing rx freq */
-              case 2: tx_vfo += update; break;                      /* rx freq fixed, changing tx freq */
+          /* else */
+           switch( split ){
+              case 0: tx_vfo = rx_vfo = rx_vfo + update_;  break;    /* normal */
+              case 1: rx_vfo += update_; break;                      /* tx freq fixed, changing rx freq */
+              case 2: tx_vfo += update_; break;                      /* rx freq fixed, changing tx freq */
            }
                       
           update_frequency(DISPLAY_UPDATE);

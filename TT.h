@@ -37,4 +37,4 @@
 
 #define encoder0PinA                         7
 #define encoder0PinB                         6
-#define PSK_MOD_PIN                          4
+#define PSK_MOD_PIN                          4          // pin 31 or 4
