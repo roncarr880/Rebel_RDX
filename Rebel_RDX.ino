@@ -1,6 +1,7 @@
 
 //!!!! to do list
 //  fix the paddles code to use the new mode A, B, ULT code
+//  THIGH shows for 5 watt digi
 
 // uno32 program for the TenTec REBEL
 
@@ -267,9 +268,9 @@ int wpm = 14;
 #define LSB 0
 #define USB 1
 
-float tone_;              // FT8 tone detected.
-int8_t tone_available;
-uint8_t digi_vox;
+volatile uint32_t tone_;              // FT8 tone detection variables, tone_ is in 25ns ticks
+volatile uint8_t tone_available;
+volatile uint8_t digi_vox;
 
 struct MEMORY {
   char   name_[15];
@@ -2748,7 +2749,7 @@ static int robin;
 static int argo_time;   /* for ARGO_EMU */
 static int rtty_baud_clk;
 long sample;
-float tone2;
+uint32_t tone2;
 
 //  !!!!! below is just a temporary safeguard  
 //   digitalWrite(TX_OUT,LOW);       // turn off TX just in case we made a mistake
@@ -2951,11 +2952,10 @@ float tone2;
    
 }  //end loop
 
-
+/*    this is the float version of ft8_tx
 // there is a certain amount of noise with the tone detect using the core timer.  It is probably caused by interrupt latency from
 // millis() interrupts, serial interrupts, etc.  But the method used is useful as it works good enough to send wspr. And looking
 // at the waveform using the arduino plotter may be causing some of the noise. 
-
 void ft8_tx( float val ){
 long dds_val;
 static uint32_t tm;
@@ -2975,8 +2975,6 @@ static int count;
   val = tval / (float)count;
   count = 0;  tval = 0.0;
 
-  val = median2( val );      // double smooth useful?
-
   dds_val = (long)(( tx_vfo + val )  * (268.435456e6 / Reference ));  
   wspr_to_freq( dds_val );
 
@@ -2987,7 +2985,62 @@ static int count;
   // Serial.println(val);
   
 }
+*/
 
+
+// ft8_tx version using 25ns ticks, about the same noise as the float version except this one is dead on frequency without any 
+// fudge factors
+void ft8_tx( uint32_t val ){
+long dds_val;
+static uint32_t tm;
+static uint32_t tval;
+static int count;
+float val2;
+
+  if( val < 13000 || val > 200000 ) return;   // 25ns ticks for 3000 to 200 hz
+
+  val = median( val );                        // remove glitches in the data stream
+  tval += val;
+  ++count;
+  
+  // 3ms updates, 333 baud.  10ms updates, 100 baud
+  if( millis() - tm < 10 ) return;
+  tm = millis();
+
+  val2 = (float)tval / (float)count;          // average value over N ms, N = 10 for now
+  val2 = 40000000.0f / val2;                  // convert ticks to audio tone
+  count = 0;  tval = 0;
+
+  dds_val = (long)(( tx_vfo + val2 )  * (268.435456e6 / Reference ));  
+  wspr_to_freq( dds_val );
+
+  // !!! debug on arduino plotter
+  // static uint8_t mod2;           // slow down prints if 3ms updates
+  // mod2 = ( mod2 + 1 ) & 3;
+  //if( mod2 ) return;
+  //Serial.println(val2);
+}
+
+
+uint32_t median( uint32_t val ){
+static uint32_t vals[3];
+static uint8_t in;
+uint8_t j,i,k;                               // low, median, high
+
+   vals[in] = val;
+   ++in;
+   if( in > 2 ) in = 0;
+
+   j = 0, i = 1, k = 2;                     // pretend they are in the correct order
+   if( vals[j] > vals[k] ) k = 0, j = 2;    // swap guess high and low
+   if( vals[i] < vals[j] ) i = j;           // is lower than the low guess, pick that one instead
+   if( vals[i] > vals[k] ) i = k;           // is higher than the high guess
+
+   return vals[i];
+
+}
+
+/* float version of median
 float median( float val ){
 static float vals[3];
 static uint8_t in;
@@ -3005,24 +3058,7 @@ uint8_t j,i,k;                               // low, median, high
    return vals[i];
 
 }
-
-float median2( float val ){
-static float vals[3];
-static uint8_t in;
-uint8_t j,i,k;                               // low, median, high
-
-   vals[in] = val;
-   ++in;
-   if( in > 2 ) in = 0;
-
-   j = 0, i = 1, k = 2;                     // pretend they are in the correct order
-   if( vals[j] > vals[k] ) k = 0, j = 2;    // swap guess high and low
-   if( vals[i] < vals[j] ) i = j;           // is lower than the low guess, pick that one instead
-   if( vals[i] > vals[k] ) i = k;           // is higher than the high guess
-
-   return vals[i];
-
-}
+*/
 
 
 
@@ -4764,7 +4800,44 @@ static int on_off;
    }
 }
 
+//  tone detection based upon counting 25 ns ticks since last zero cross
+//  FT8 etc modes tx tone detection, DDS updated from loop.  This one is on frequency.
+uint32_t digi_core( uint32_t timer ){
+int data;
+static int last;
+static uint32_t start_tm;                               // last timer value
+static uint32_t total_tm;
+uint32_t fraction;                                      // counts past zero cross
+uint32_t tm;
 
+
+  data = analogRead( FT8_PIN ) - 512;
+  tm = timer - start_tm;
+  start_tm = timer;
+  total_tm += tm;
+
+  if( data > 0 && last <= 0 ){                          // zero cross detected
+      int spread = data-last;                           // last is always negative
+      fraction =  ( data * tm ) / spread;               // ticks past zero
+      tone_ = total_tm - fraction;                      // sub ticks past zero cross
+      total_tm = fraction;                              // add fraction past zero as start amount for next cycle
+      tone_available = 1;    
+  }
+  last = data;
+
+  if( abs(data) > 31 ) digi_vox = 10;                   // 10ms vox hang time
+  if( digi_vox == 0 ){
+      total_tm = 0;
+      return timer + CORE_TICK_RATE/3;                  // vox check only, 3k sample rate 
+  }
+   
+  return timer + CORE_TICK_RATE/20;                     // 20k sample rate when transmitting
+  
+}
+
+
+/*
+//  tone detection based upon counting interrupts and figuring a fraction of an interrupt
 //  FT8 etc modes tx tone detection, DDS updated from loop. 
 uint32_t digi_core( uint32_t timer ){
 int data;
@@ -4792,6 +4865,7 @@ static float fract;
   return timer + CORE_TICK_RATE/20;                            // 20k sample rate when transmitting
   
 }
+*/
 
 
 /*  core timer function for fft processing */
@@ -5629,7 +5703,7 @@ int snapval;
     
     /* avoid reading RIT pot during transmit.  Voltage sag will affect reading */
     if( transmitting || tdown ) return;
-    if( mode == WSPR  ){
+    if( mode == WSPR || mode == DIGI  ){
        rit_offset = 0;
        return; 
     }
