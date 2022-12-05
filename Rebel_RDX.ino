@@ -1,15 +1,13 @@
 
 //!!!! to do list
 //  fix the paddles code to use the new mode A, B, ULT code
-//  add  median code
-// freq on LED's seems to be incorrect.  A step delayed.  It is called before the thun tdec values are updated.
-//   think they should not be calculated in loop but somewhere else, maybe before the call to display
 
+// uno32 program for the TenTec REBEL
 
-/* uno32 program for the TenTec REBEL with some hardware mods */
+// This program allows the Rebel to operate in CW, RTTY, WSPR, PSK31, HELL modes with a simple terminal program,
+// or in FT8, FT4, JS8  modes with an appropriate program running on a computer.
 
-// This program allows the Rebel to operate in CW, RTTY, WSPR, PSK31 modes with a simple terminal program,
-// or in FT8, FT4, JS8  modes with the appropriate program running on a computer.
+// by K1URC 
 
 /* 
  Important - before using: 
@@ -21,13 +19,10 @@
  * The program is written to use either no display or a Nokia display.  
  * If you have an I2C display or 2 line LCD you can move the FT8 routines into your sketch.
  * Look for digi_core(), ft8_tx(), wspr_to_freq(), digi_setup() and how they are called.
- * You will also need CAT control code or some other way to key the transmitter.  
- * And watch for analog reads in your main code, they will probably need to be
+ * The transmitter is keyed using vox, cable the audio into the paddle jack.  
+ * Watch for analog reads in your main code, they will probably need to be
  * guarded from interrupts with noInterrupts(), interrupts()
  */
-
-
-/* by K1URC */
 
 
 /*  
@@ -36,8 +31,15 @@ Hardware mods:
 
 DIGI modes, FT8, JS8, FT4 etc:
 
-Pin A11 is unused.   Wire a voltage divider of 10k 10k from +3v to ground.  The center tap goes to pin A11.  Connect a 1k resistor and 
-a capacitor( about 1.0 uf )  in series from pin 33 ( DAH ) to pin A11.  plus side of cap towards resistor and pin 33.
+Wire a 2 resistor voltage divider of approximately  22k 22k from +3v to ground.  The center tap goes to pin A11.
+Connect a 1k resistor and a capacitor( about 1.0 uf )  in series from pin 33 ( DAH ) to the center tap / A11 node.
+The plus side of cap towards resistor and pin 33.
+
+  +3v --------\/\/\/\/--*---\/\/\/\/\---------GND
+                        |
+                  +||   |
+ Pin 33 ---\/\/\/--||---*---------Pin A11
+                   ||
 
 Morse decoder:
  The code read function has been changed to the cw speed pot.  The center of the pot is connected to the output
@@ -45,10 +47,10 @@ Morse decoder:
  The signal level on the original code read pin is too low to be useful.  The mod gives the signal more gain.
  If this mod is not done, the code read function and band scope will not work.  All else will be ok.
 
- With the code read mod and the below mod, the program will send and receive PSK31, tuning is fairly critical.
-
+PSK31:
+ This program will send and receive PSK31, tuning is fairly critical.
  
- PSK31 AM modulator:  only needed for PSK31 transmit or low power WSPR beacon.
+ PSK31 AM modulator:  only needed for PSK31 transmit or low power mode.
                                            /
  0----------\/\/\/\/----------0-----------0  0------------- to center of R21 the Final FET Bias Pot
  pin 4       Ra               |                             you can wire this on the top of the board
@@ -83,10 +85,11 @@ Morse decoder:
 // Low power is used for WSPR and RTTY if transmission is long.  CW and Hell are low duty cycle modes and high power is OK.
 // WSPR does drift a bit so I may be adding a heat sink mod or a temperature stabilization method.
 
-// I have since converted the low power feature into the PSK31 AM modulator.
+// I have since converted the low power feature into the PSK31 AM modulator as noted above.
 
 // AGC - I removed U$91 from the circuit with etch cuts and added an agc controlled attenuator in front of the 1st mixer.
-// Power out - I added and since removed a 8.2 k resistor from the power out test point to ground.  The power out voltage exceeds
+
+// Power out - I tried and since removed a 8.2 k resistor from the power out test point to ground.  The power out voltage exceeds
 // 3.3 volts preventing an accurate reading at 5 watts out.  The very small coupling cap also complicates resistor divider calculations.
 
 // I unsoldered one side of C22 and effectivly removed it from the circuit.  This reduces the gain of the LM386 by 20db but more
@@ -125,14 +128,23 @@ On startup, the mode menu will display and one can easily change to display mode
   
 */
 
+// FT8 operation:
+
 // Startup with Nokia display, select the display, follow the menus.
 
 // Without a display, compile in the defaults you want/need.
-// Startup without a display, Power up, pause 10 seconds.
-// Tap select to exit the menu's you can't see. To enter FT8 DIGI modes, change the function
+// Power up, pause 10 seconds.
+// Tap select (to exit the menu's you can't see). To enter FT8 DIGI modes, change the function
 // to BW.  Long press Select.
+// Cable headphone to computer MIC in,  computer audio out to paddle jack.  Use a good amount of audio drive.
+// Use CAT control if desired( TenTec Argo V or Elecraft K3 ). You can use WSJT-X to set the frequency.
+// Transmitter is keyed by Vox.
+// The LED's indicate the frequency in binary.  An example for 20 meters:
+//   The radio starts at 14060.  60 will display in the LEDs as Select green and yellow on, Function LEDs not lit is a zero.
+//   Tune up to 14074.  At 14074, the Select LED's will all be lit showing 7, the Function LEDs will be only Green lit showing a 4.
+//   Binary weighted, Green = 4, Yellow = 2, Red = 1.  To show 8 and 9, one or two of the LEDs will dim.
+//   If the TT LED is dim, you should center the RIT control.
 
-// FT8 DIGI modes use the TenTec Argonaut V CAT control.  Use CAT for transmit control.
 
 #include "TT.h"         // original TT defines for pinmode setup
 #include "K1_morse.h"   // also has baudot table.  Renamed as conflicts with Library with name morse.h  
@@ -142,13 +154,13 @@ On startup, the mode menu will display and one can easily change to display mode
 #include "fec_table.h"
 
 #define FT8_PIN A11       
-#define CODEREAD_PIN A7      // code read moved from CODE_READ to the cw-speed pot with the hardware mod. Else code_read is A6.
+#define CODEREAD_PIN A7    // code read moved from CODE_READ to the cw-speed pot with the hardware mod. Else code_read is A6.
 
 
-// two CAT control implimentations are offered.  TenTec has fewer if any bugs.  K3 is not so robust.
+// two CAT control implimentations are offered.  TenTec has fewer if any bugs.  K3 is not as robust.
 #define BAUDRATE 57600  // TenTec Argo is 1200 baud. HRD offers 57600 as well as 1200. Elecraft K3 is 38400? 
 
-/* !!!! change this to your call or whatever message you wish to auto transmit */
+/* !!! change this to your call or whatever message you wish to auto transmit */
 const char cq_msg[] = "CQ CQ CQ CQ DE K1URC K1URC K1URC K";    /* must use capital letters here */
 
 /*  !!! change this if you will use the WSPR transmitting feature */
@@ -191,6 +203,7 @@ int cat_emu = ARGO_EMU;     // must use Argonaut V emulation if running the Perl
 #define EUROPE 4
 int band_limits = ADVANCED;        // change this line for a different default  
 
+// the program can send/display keyboard modes CW, RTTY, PSK31, MFSK, HELL( can't see HELL so use FLDIGI for display )
 
 int serial_decode = 0;    // when enabled sends the decoded morse or rtty on the serial line 
                           // one can use hyperterm (for example) to see the text on a larger screen than the nokia display
@@ -213,8 +226,8 @@ int rtty_on_leds = 0;     // when enabled the green led's will flash with the de
 /* sending method - for rtty one can use a hardware interface wired to the key jack, or use a terminal program */
 /* this also allows CW and Hellschreiber to be sent via a terminal program */
 /* the key jack will always send CW if not using RTTY with the hardware interface wired to the key jack */
-#define CRH_TX_KEY 0
-#define CRH_TX_TERM 1
+#define CRH_TX_KEY 0       // serial activity will be CAT if CAT is enabled
+#define CRH_TX_TERM 1      // using a terminal to send and receive
 #define CRH_TX_PERL 2      // using the Perl GUI - I don't think many users have tried this
 int crh_tx_method = CRH_TX_KEY; 
 
@@ -224,12 +237,12 @@ int crh_tx_method = CRH_TX_KEY;
 //  look in top_menu() at how the mode_offset for CW is calculated.  Changing stuff here won't do anything.
 #define  CW_TONE_600 0
 #define  CW_TONE_700 1
-#define  CW_TONE_800 2
+#define  CW_TONE_800 2      // maybe best lowest tone?.  On edge of the narrow filter.
 #define  CW_TONE_900 3
 #define  CW_TONE_1000 4     // 1000 or 1100 is the center of the narrow filter
 int cw_offset_tone = CW_TONE_800;
 
-const int sliding_offset_enable = 0;   // The offset changes via RIT control, perhaps makes the narrow filter more useful.
+const int sliding_offset_enable = 0;   // The offset changes via RIT control, perhaps makes the narrow filter more useful?
 
 /* modes */
 #define CW 0        
@@ -256,6 +269,7 @@ int wpm = 14;
 
 float tone_;              // FT8 tone detected.
 int8_t tone_available;
+uint8_t digi_vox;
 
 struct MEMORY {
   char   name_[15];
@@ -273,13 +287,14 @@ struct MEMORY {
 //  USB offsets should normally be negative and LSB positive.
 //  The combination of the freq and offset specify the suppressed carrier freq the radio is tuned to.
 //    As an example you can tune 60 meter SSB memory channel two ways 
-//    { "60 Meters 1",  5332000, 0, USB, -1500 , SSB },  here the memory channed center is specified and an offset of 1500
+//    { "60 Meters 1",  5332000, 0, USB, -1500 , SSB },  here the memory channel center is specified and an offset of 1500
 //    { "60 Meters 1",  5330500, 0, USB, 0 , SSB },      here the suppressed carrier freq is entered directly 
 //    The first way is handy when channel centers are specified as in WEFAX and 60 meters
 //    The 2nd way is handy when you know the ssb suppressed carrier frequency directly as in net frequecies or tuning WWV.
 //    For CW you need an offset or your transmit freq will result in a zero freq tone in the other guys receiver, he won't hear you.
 //  You can tune around a memory channel by unlocking the VFO.
-#define NOMEM 52
+//  I removed my 4 band board and put in the two band, so only bands 0 and 2 have relays now.
+#define NOMEM 48
 const struct MEMORY memory[NOMEM] = {
    { "40m QRP",        7030000, 0, LSB, 800, CW },   
    { "40m QRP",        7040000, 0, LSB, 800, CW },   
@@ -310,7 +325,7 @@ const struct MEMORY memory[NOMEM] = {
    { "New Orleans",  8503900, 1, USB, -1900 , WEFAX },
    { "Pt. Reyes",    8682000, 1, USB, -1900 , WEFAX },
    { "Northwood UK", 8040000, 1, USB, -1900 , WEFAX },
-   { "Boston",       9110000, 1, USB, -1900 , WEFAX },    // the dds will be 110 khz for this one, image on 8890000
+  // { "Boston",       9110000, 1, USB, -1900 , WEFAX },    // the dds will be 110 khz for this one, image on 8890000
    { "Boston",      12750000, 1, USB, -1900 , WEFAX },
    { "New Orleans", 12789900, 1, USB, -1900 , WEFAX },
    { "Pt. Reyes",   12786000, 1, USB, -1900 , WEFAX },
@@ -318,9 +333,9 @@ const struct MEMORY memory[NOMEM] = {
    { "Honolulu",    11090000, 1, USB, -1900 , WEFAX },
    { "Tokoyo",      13988500, 2, USB, -1900 , WEFAX },
    { "Hamburg",     13882500, 2, USB, -1900 , WEFAX },
-   { "New Orleans", 17146400, 3, USB, -1900 , WEFAX },   
-   { "Pt. Reyes",   17151200, 3, USB, -1900 , WEFAX },
-   { "Taipei",      18560000, 3, USB, -1900 , WEFAX },
+   //{ "New Orleans", 17146400, 3, USB, -1900 , WEFAX },   
+   //{ "Pt. Reyes",   17151200, 3, USB, -1900 , WEFAX },
+   //{ "Taipei",      18560000, 3, USB, -1900 , WEFAX },
    { "Air Volmet",   6604000, 0, USB, 0 , SSB },
    { "Air NY E",     6628000, 0, USB, 0 , SSB },
    { "Air Carib A",  6577000, 0, USB, 0 , SSB },
@@ -340,7 +355,7 @@ const struct MEMORY memory[NOMEM] = {
 int channel = 0;     // current memory channel.
 int mem_tune = 0;
 
-#define PWR_WARN   1  //  set to 1 if you have a low power mod and wish to be notified if the power out is incorrent for the mode in use.
+#define PWR_WARN   1  // works with low power mod and wish to be notified if the power out is incorrent for the mode in use.
 
 #define NUMBANDS 7                         // general has 6 segments 40 to 17 meters
    const int bandstart[5][NUMBANDS] = {
@@ -447,9 +462,9 @@ const char wspr_wwv_msg[4][4] = {
 };
 
 /* states of functions and selections and startup defaults */
-int fun_selected[]  = {2,1,0};   
- //    2,      bandwidth yel = medium - 3 positions
- //    1,      step 100 - use 0 for step 10 - 4 positions   
+int fun_selected[]  = {1,2,0};   
+ //    1,      bandwidth green = wide - 3 positions
+ //    2,      step 1000 - use 0 for step 10 - 4 positions   
  //    0       user function menu ( total of  8 user functions )
  
 int function = 2;   /* start out in user - menu */
@@ -597,7 +612,7 @@ int timeout_ok = 0;
 int save_nokia;           // save display setting when change to contrast or keyer speed screen
 int nokia_s_inhibit= 0;   // separate nokia s meter from the LED s meter
 
-LCD5110 LCD( 30,29,28,26,27 );   /* should reset be on I/O or tied to system reset. I used system reset */
+LCD5110 LCD( 30,29,28,26,27 );   /* reset on system reset works with some displays, need I/O pin on others */
 
 /*  dsp variables */
 long samples[8];      /* buffer so samples are not lost due to cpu timing */
@@ -615,8 +630,9 @@ int sideband = USB;   // radio powers up on 20 meters in order to check for a ba
 int sideband_mode = NORMAL;
 
 // starting CW offset, the filter center is 1000 or 1100.  Below 900 one is on the edge of the passband.
+// !!! how does this interact with the settings above
 int mode_offset = 900;    // this will change with each mode
-int goalpost = 9;       // tuning slightly on the low side of the filter with these settings
+int goalpost = 9;         // tuning slightly on the low side of the filter with these settings
 
 int vals[FFTSIZE/2 + 1];    /* sin value */
 int valc[FFTSIZE/2 + 1];    /* cos value */
@@ -1546,7 +1562,7 @@ char * mode_band(){    // create string to display mode and sideband
 static char msg[9];
 int i;
 int k;
-const char mode_str[] = "CW  Hel PSK RttyMfskWsprJT6 SSB ";
+const char mode_str[] = "CW  Hel PSK RttyMfskWsprDIGISSB ";
 
    i = 4*mode;
    if( i == 0 && fun_selected[0] == 1 ) i = 28;   // cw becomes ssb when wide band filter selected
@@ -2747,7 +2763,7 @@ float tone2;
      if( mode == RTTY ) rtty_modem(sample);
      if( mode == PSK31 ) psk_modem(sample);
    }    
-   else if( tone_available ){         // digi mode transmit
+   else if( transmitting && tone_available ){         // digi mode transmit
      noInterrupts();
      tone2 = tone_;
      tone_available = 0;  
@@ -2772,10 +2788,21 @@ float tone2;
       
       oldtime=  time_;
       ++counter;        /* paddle timer */
+
+      if( mode == DIGI ){                   // vox check
+          if( digi_vox ){
+              if( --digi_vox == 0 ){
+                 transmit(OFF);
+                 update_frequency(NO_DISPLAY_UPDATE);       // dds back to rx freq
+              }
+              else if( transmitting == 0 ) transmit(ON);
+          }
+          else tone_available = 0;
+      }
           
       if( mode == RTTY ) rtty_key();        // check if should transmit
       else if( straightkey || mode == HELL ) sk_transmit();
-      else paddles();
+      else if( mode != DIGI ) paddles();
       
       if( crh_tx_method == CRH_TX_TERM ) keyboard_input();  
        
@@ -2925,18 +2952,79 @@ float tone2;
 }  //end loop
 
 
+// there is a certain amount of noise with the tone detect using the core timer.  It is probably caused by interrupt latency from
+// millis() interrupts, serial interrupts, etc.  But the method used is useful as it works good enough to send wspr. And looking
+// at the waveform using the arduino plotter may be causing some of the noise. 
 
 void ft8_tx( float val ){
 long dds_val;
-
-  int i = val;                                  // debug !!!
-  LCD.printNumI( i, LEFT, 0, 3, ' ' );
+static uint32_t tm;
+static float tval;
+static int count;
 
   if( val < 200 || val > 3000 ) return;
+
+  val = median( val );
+  tval += val;
+  ++count;
+  
+  // 3ms updates, 333 baud.  10ms updates, 100 baud
+  if( millis() - tm < 10 ) return;
+  tm = millis();
+
+  val = tval / (float)count;
+  count = 0;  tval = 0.0;
+
+  val = median2( val );      // double smooth useful?
+
   dds_val = (long)(( tx_vfo + val )  * (268.435456e6 / Reference ));  
   wspr_to_freq( dds_val );
+
+  // !!! debug on arduino plotter
+  // static uint8_t mod2;
+  // mod2 = ( mod2 + 1 ) & 3;
+  //if( mod2 ) return;
+  // Serial.println(val);
   
 }
+
+float median( float val ){
+static float vals[3];
+static uint8_t in;
+uint8_t j,i,k;                               // low, median, high
+
+   vals[in] = val;
+   ++in;
+   if( in > 2 ) in = 0;
+
+   j = 0, i = 1, k = 2;                     // pretend they are in the correct order
+   if( vals[j] > vals[k] ) k = 0, j = 2;    // swap guess high and low
+   if( vals[i] < vals[j] ) i = j;           // is lower than the low guess, pick that one instead
+   if( vals[i] > vals[k] ) i = k;           // is higher than the high guess
+
+   return vals[i];
+
+}
+
+float median2( float val ){
+static float vals[3];
+static uint8_t in;
+uint8_t j,i,k;                               // low, median, high
+
+   vals[in] = val;
+   ++in;
+   if( in > 2 ) in = 0;
+
+   j = 0, i = 1, k = 2;                     // pretend they are in the correct order
+   if( vals[j] > vals[k] ) k = 0, j = 2;    // swap guess high and low
+   if( vals[i] < vals[j] ) i = j;           // is lower than the low guess, pick that one instead
+   if( vals[i] > vals[k] ) i = k;           // is higher than the high guess
+
+   return vals[i];
+
+}
+
+
 
 void keyboard_input(){        // dumb terminal input mode
 static int hell_idle;
@@ -3645,7 +3733,10 @@ int val;
 static int duty;
 char buf[35];
 
-   noInterrupts();  battery_value = analogRead( BATTERYCHK );  interrupts();
+   if( transmitting && mode == DIGI ) battery_value = 80;                 // fake for digi
+   else{
+      noInterrupts();  battery_value = analogRead( BATTERYCHK );  interrupts();
+   }
    //if( user[DISPLAY] == 0 ) battery_value = analogRead( BATTERYCHK );  // battery saver mode
    
    bat = battery_value * 10;   /* scaling up by 10 */
@@ -3692,6 +3783,7 @@ char bar;
 static int duty;
 static int s_cal[12] = {71,72,73,74,76,80,88,104,136,168,222,348}; 
 
+   if( transmitting ) return 0;
    /* we don't need to do this every 8ms */
    if( wrt_led ){
      if( (++duty & 7) != 7 ) return 0;
@@ -4569,6 +4661,7 @@ int pmap[11] = {0,217,310,372,434,496,536,589,620,657,691};
 int i,bar;
 static int peak_pwr;   // for power warn avoid false low during key up times
 
+   //if( transmitting && mode == DIGI ) return;   // try allowing now that some other issues are fixed
    led_on_timer = 600;
    noInterrupts();  power_value = analogRead( POWEROUT );  interrupts();
    //if( user[DISPLAY] == 0 ) power_value = analogRead(POWEROUT);  // battery saver mode
@@ -4679,8 +4772,6 @@ static int last;
 static int counts;
 static float fract;
 
-  if( transmitting == 0 ) return timer + CORE_TICK_RATE;       // 1ms 
-
   data = analogRead( FT8_PIN ) - 512;
   ++counts;
 
@@ -4689,13 +4780,16 @@ static float fract;
            float spread = (float)( data - last );       // last is always negative here
            fract = ( (float)(data)/spread );
            tone_ -= fract;                              // subract the amount we went past zero cross this time
-           tone_ = 12000.0f / tone_;
+           //tone_ = 20000.0f / tone_;
+           tone_ = (20000.0f - 256.0f)/tone_;           // resulting tone is high for some reason, interrupt latency?
            tone_available = 1;
            counts = 0;     
   }
   last = data;
 
-  return timer + CORE_TICK_RATE/12;                            // 12k sample rate
+  if( abs(data) > 31 ) digi_vox = 11;                          // 10ms vox hang time
+  if( digi_vox == 0 ) return timer + CORE_TICK_RATE/3;         // vox check only, 3k sample rate 
+  return timer + CORE_TICK_RATE/20;                            // 20k sample rate when transmitting
   
 }
 
@@ -4987,7 +5081,6 @@ void setup()
    digitalWrite(SCLK_BIT, HIGH);     
    digitalWrite(FSYNC_BIT, HIGH);  
    digitalWrite(SDATA_BIT, HIGH);
-//   digitalWrite(PSK_MOD_PIN,HIGH);
    
    AD9834_reset();                        
    AD9834_init();
@@ -5014,6 +5107,7 @@ void setup()
 }  // end setup
 
 
+// separate from menu as can enable with select button long when function = BW
 void digi_setup(){
 
    if( transmitting ) rtty_down();
@@ -5028,7 +5122,7 @@ void digi_setup(){
    mode = DIGI;
    sideband_mode = USB_ONLY;
    sideband = USB;
-   cat_emu = ARGO_EMU; 
+   //cat_emu = ARGO_EMU; 
    Serial.begin(BAUDRATE); 
    attachCoreTimerService( digi_core );
   
@@ -5326,8 +5420,12 @@ int i;
      digitalWrite(FSYNC_BIT, HIGH);
      attachCoreTimerService( psk_mod_core );
    }
-   if( mode == RTTY || mode == PSK31 || mode == MFSK ){      // low power mod if implimented will reduce power
-     pinMode(PSK_MOD_PIN, OUTPUT);
+   
+   // low power mod if implimented will reduce power with switch in off position. Enable for all modes now as might be useful for
+   // tuning up an antenna with 500 mw.
+   // if( mode == RTTY || mode == PSK31 || mode == MFSK ){ 
+   if( mode != WSPR ){               // wspr very low power with switch off, hardly lights the LED on my 4 state tuner
+     pinMode(PSK_MOD_PIN, OUTPUT);   // enable 500mw to 1000 mw low power for other modes
      LATFCLR = PSK_MOD;
    } 
 
@@ -5536,7 +5634,11 @@ int snapval;
        return; 
     }
 
-    if( user[DISPLAY] == 0 ) rit_value = analogRead( RIT_PIN );  // battery save mode     
+    noInterrupts();
+    rit_value = analogRead( RIT_PIN );
+    interrupts();
+
+    //if( user[DISPLAY] == 0 ) rit_value = analogRead( RIT_PIN );  // battery save mode     
     newval = (rit_value + (7 * ritvalue))/8;     //Lowpass filter
 
     if( mode == CW && sliding_offset_enable && cw_offset_tone != 4 ){
