@@ -1,7 +1,12 @@
 
 //!!!! to do list
 //  fix the paddles code to use the new mode A, B, ULT code
-//  THIGH shows for 5 watt digi
+//  CAT control not working with wsjt-x nor FLdigi.   Works with Ham Radio Deluxe.  
+//  wspr not transmitting on warm boot but ok on cold boot?  CQ message not sending.  Variables out of sync?
+//     Strange bug, working now.
+//     Maybe can't power up with Audio cable in the Key jack? It looks like a straight key?
+//     Still works after the WWV sync up.
+
 
 // uno32 program for the TenTec REBEL
 
@@ -51,7 +56,7 @@ Morse decoder:
 PSK31:
  This program will send and receive PSK31, tuning is fairly critical.
  
- PSK31 AM modulator:  only needed for PSK31 transmit or low power mode.
+ PSK31 AM modulator:  needed for PSK31 transmit or low power modes like wspr, or high duty cycle modes like RTTY.
                                            /
  0----------\/\/\/\/----------0-----------0  0------------- to center of R21 the Final FET Bias Pot
  pin 4       Ra               |                             you can wire this on the top of the board
@@ -144,7 +149,7 @@ On startup, the mode menu will display and one can easily change to display mode
 //   The radio starts at 14060.  60 will display in the LEDs as Select green and yellow on, Function LEDs not lit is a zero.
 //   Tune up to 14074.  At 14074, the Select LED's will all be lit showing 7, the Function LEDs will be only Green lit showing a 4.
 //   Binary weighted, Green = 4, Yellow = 2, Red = 1.  To show 8 and 9, one or two of the LEDs will dim.
-//   If the TT LED is dim, you should center the RIT control.
+//   ( If the TT LED is dim, you should center the RIT control. RIT is now disabled in DIGI mode )
 
 
 #include "TT.h"         // original TT defines for pinmode setup
@@ -159,7 +164,7 @@ On startup, the mode menu will display and one can easily change to display mode
 
 
 // two CAT control implimentations are offered.  TenTec has fewer if any bugs.  K3 is not as robust.
-#define BAUDRATE 57600  // TenTec Argo is 1200 baud. HRD offers 57600 as well as 1200. Elecraft K3 is 38400? 
+#define BAUDRATE 1200  // TenTec Argo is 1200 baud.  Elecraft K3 is 38400? 
 
 /* !!! change this to your call or whatever message you wish to auto transmit */
 const char cq_msg[] = "CQ CQ CQ CQ DE K1URC K1URC K1URC K";    /* must use capital letters here */
@@ -204,7 +209,7 @@ int cat_emu = ARGO_EMU;     // must use Argonaut V emulation if running the Perl
 #define EUROPE 4
 int band_limits = ADVANCED;        // change this line for a different default  
 
-// the program can send/display keyboard modes CW, RTTY, PSK31, MFSK, HELL( can't see HELL so use FLDIGI for display )
+// the program can send/display keyboard modes CW, RTTY, PSK31, MFSK, HELL( can't display HELL so use FLDIGI for display )
 
 int serial_decode = 0;    // when enabled sends the decoded morse or rtty on the serial line 
                           // one can use hyperterm (for example) to see the text on a larger screen than the nokia display
@@ -4697,7 +4702,6 @@ int pmap[11] = {0,217,310,372,434,496,536,589,620,657,691};
 int i,bar;
 static int peak_pwr;   // for power warn avoid false low during key up times
 
-   //if( transmitting && mode == DIGI ) return;   // try allowing now that some other issues are fixed
    led_on_timer = 600;
    noInterrupts();  power_value = analogRead( POWEROUT );  interrupts();
    //if( user[DISPLAY] == 0 ) power_value = analogRead(POWEROUT);  // battery saver mode
@@ -4721,7 +4725,7 @@ static int peak_pwr;   // for power warn avoid false low during key up times
           lcd_puts("LOW    ");
           return;
         }
-        if( mode > HELL && peak_pwr >= 620 ){
+        if( mode > HELL && mode != DIGI && peak_pwr >= 620 ){
           lcd_puts("HIGH   ");
           return;
         }
