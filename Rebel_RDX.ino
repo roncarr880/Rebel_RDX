@@ -1,12 +1,9 @@
 
 //!!!! to do list
 //  fix the paddles code to use the new mode A, B, ULT code
-//  CAT control not working with wsjt-x nor FLdigi.   Works with Ham Radio Deluxe.  
-//  wspr not transmitting on warm boot but ok on cold boot?  CQ message not sending.  Variables out of sync?
-//     Strange bug, working now.
-//     Maybe can't power up with Audio cable in the Key jack? It looks like a straight key?
-//     Still works after the WWV sync up.
-
+//  memory tune core timer setups
+//  extra Transmit at end after return to receive, think may be RF in the shack
+//  Red flash select leds on tx, is this the out of gas indication?
 
 // uno32 program for the TenTec REBEL
 
@@ -46,6 +43,8 @@ The plus side of cap towards resistor and pin 33.
                   +||   |
  Pin 33 ---\/\/\/--||---*---------Pin A11
                    ||
+
+( I have some RF in the shack using the audio cable, I may add some bypass caps on DIT an DAH, about 1nf )
 
 Morse decoder:
  The code read function has been changed to the cw speed pot.  The center of the pot is connected to the output
@@ -121,7 +120,6 @@ PSK31:
 
    Long press Select when function is Step, brings up the keyer speed menu.
    Long press Select when function is BW, changes mode to DIGI to run FT8 type of programs.
-     CAT control is TenTec Argonaut V at 57600 baud when in this mode.
 
    Press the Function button to exit menu setups.
    The nokia display has help text on the S meter line as what you will get with a long press of select.
@@ -164,7 +162,11 @@ On startup, the mode menu will display and one can easily change to display mode
 
 
 // two CAT control implimentations are offered.  TenTec has fewer if any bugs.  K3 is not as robust.
-#define BAUDRATE 1200  // TenTec Argo is 1200 baud.  Elecraft K3 is 38400? 
+// on first open of the serial port the chipKit UNO32 will reset.  The 2nd try should work.  Serial prints in MPIDE
+// were blocking, not sure if they are under Arduino 1.8.13 but I left in the stage write code which works around the
+// serial write blocking issue.
+//#define BAUDRATE 1200      // TenTec Argo is 1200 baud.  Elecraft K3 is 38400?
+#define BAUDRATE 57600   // for fast printing of debug information, may work for Argo CAT also
 
 /* !!! change this to your call or whatever message you wish to auto transmit */
 const char cq_msg[] = "CQ CQ CQ CQ DE K1URC K1URC K1URC K";    /* must use capital letters here */
@@ -708,10 +710,10 @@ unsigned long  time_;          // ( mainly they are loop() variables )
 int wwv_tone;                  // the counter
 
 
-long jt_buf[128];
-long jt_fcalc0;       // rx dds word, saved so we can send it back on serial
-int jt_tx_on;         // controls transmit
-int jt_tx_index;      // where we are in 126 tx tones
+//long jt_buf[128];
+//long jt_fcalc0;       // rx dds word, saved so we can send it back on serial
+//int jt_tx_on;         // controls transmit
+//int jt_tx_index;      // where we are in 126 tx tones
 //int jt_time;          // serial timer to avoid blocking on writes to serial port
 
 #define MFSK_GO  1
@@ -1411,6 +1413,7 @@ char c;
        break;
        
        case 1:  /* 30 meters */
+        digitalWrite( Band_Select,HIGH );
         digitalWrite( Band_Select2,HIGH );    //HH
         if( nokia == 0 ) auto_tx( cut_numbers[3] );       /* announce the band */  
         sideband = ( sideband_mode == NORMAL ) ? LSB : USB; 
@@ -1424,10 +1427,11 @@ char c;
        break;
        
        case 3:  /* 17 meters */
+        digitalWrite( Band_Select,LOW );
         digitalWrite( Band_Select2,HIGH );    //LH
         if( nokia == 0 ) auto_tx( cut_numbers[1] );       /* announce the band */ 
         sideband = USB;
-        break;
+       break;
      }
      
      update_frequency(DISPLAY_UPDATE);
@@ -1629,6 +1633,8 @@ static int counter = 0;   /* counting in 8ms steps */
    if( ++counter > 375 ) counter = 0;     /* blink every 3 seconds */  
 }
 
+
+// this function is called from both interrupts and main code
 void transmit( int key ){
     
   if( key ){
@@ -1642,7 +1648,7 @@ void transmit( int key ){
       }
       LATGSET = DDS_SEL;  /* change dds */
       LATFSET = ( tx_inhibit ^ TXENABLE );    /* turn on transmitter */
-      LATFSET = PSK_MOD;   // extra power for rtty and DIGI( with low power mod ).  Whether this does anyting is controlled by pinmode
+      LATFSET = PSK_MOD;   // extra power for rtty and DIGI( with low power mod ).  Whether this does anything is controlled by pinmode
       transmitting = 1;    //   if the pin is an input, nothing happens
   }
   else{
@@ -1731,21 +1737,21 @@ unsigned char elem;
          elem = ( morse_char & 0x80 ) ? 3 : 1;   /* sends a dit if char not defined in the table, for example ';' */
          morse_char <<= 1;
          autotx_timer = elem * 1200/wpm_local;
-         if( tx_enable ) transmit( ON );
+         if( tx_enable ) { noInterrupts(); transmit( ON ); interrupts(); }
          sidetone( ON );
          if( morse_char == 0x80 || morse_char == 0 ) tx_state = 4;
          else tx_state = 3;
       break;
       
       case 3: /* time inter element time */
-         if( tx_enable ) transmit(OFF);
+         if( tx_enable ){ noInterrupts(); transmit(OFF); interrupts(); }
          sidetone(OFF);
          autotx_timer = 1200/wpm_local;    /* dit time */
          tx_state= 2;
       break;
       
       case 4: /* time inter character time */
-         if( tx_enable ) transmit(OFF);
+         if( tx_enable ){ noInterrupts(); transmit(OFF); interrupts(); }
          sidetone(OFF);
          autotx_timer = 3 * 1200/wpm_local;   /* dah time */
          tx_state = 0;   /* get next char */
@@ -1867,7 +1873,7 @@ void sk_transmit(){  /* straight key transmit */
 
 void t_up(){
   
-   transmit(ON);
+   noInterrupts(); transmit(ON); interrupts();
    sidetone(ON);
 //   LATBINV = TTLED;   /* toggle TT LED */ /* transmit indicator now bat voltage check in the select LED's */
    tholdoff= 30;      /* 30 ms should be good for 40 wpm straight key speed */
@@ -1876,7 +1882,7 @@ void t_up(){
 
 void t_down(){
 
-   transmit(OFF);
+   noInterrupts(); transmit(OFF); interrupts();
    sidetone(OFF);
 //   LATBINV = TTLED;   /* toggle TT LED */
    tholdoff= 30;      /* 30 ms should be good for 40 wpm straight key speed */  
@@ -1890,7 +1896,7 @@ int mode_off;
    program_freq0( tx_vfo + mode_off + SPACE_OFF );
    program_freq1( tx_vfo + mode_off + MARK_OFF );
   
-   transmit(ON);
+   noInterrupts(); transmit(ON); interrupts();
 
  // rtty preamble
     load_tx_queue( 'V' | 0x80 );   // mostly all 1's so receiver can find the start bit easily
@@ -1901,7 +1907,7 @@ int mode_off;
 
 void rtty_down(){
   
-   transmit(OFF);
+   noInterrupts(); transmit(OFF); interrupts();
    LATGSET=  DDS_SEL;     // just making sure any residuall tx energy is on tx_vfo freq and not out of band with rx_vfo
    update_frequency(NO_DISPLAY_UPDATE);   // set dds back to normal
 }
@@ -1909,7 +1915,7 @@ void rtty_down(){
 void psk31_up(){
 int i;
   
-  transmit( ON );
+  noInterrupts(); transmit( ON ); interrupts();
   for( i = 0; i < 8; ++i ) load_tx_queue( 0x80 );    // load up some nulls for preamble
   load_tx_queue( '\r' | 0x80 );  // CR LF     
 }
@@ -2755,6 +2761,7 @@ static int argo_time;   /* for ARGO_EMU */
 static int rtty_baud_clk;
 long sample;
 uint32_t tone2;
+//static int mod;    // !!! debug
 
 //  !!!!! below is just a temporary safeguard  
 //   digitalWrite(TX_OUT,LOW);       // turn off TX just in case we made a mistake
@@ -2798,17 +2805,17 @@ uint32_t tone2;
       if( mode == DIGI ){                   // vox check
           if( digi_vox ){
               if( --digi_vox == 0 ){
-                 transmit(OFF);
+                 noInterrupts(); transmit(OFF); interrupts();
                  update_frequency(NO_DISPLAY_UPDATE);       // dds back to rx freq
               }
-              else if( transmitting == 0 ) transmit(ON);
+              else if( transmitting == 0 ){ noInterrupts(); transmit(ON); interrupts(); }
           }
           else tone_available = 0;
       }
           
       if( mode == RTTY ) rtty_key();        // check if should transmit
-      else if( straightkey || mode == HELL ) sk_transmit();
-      else if( mode != DIGI ) paddles();
+      else if( (straightkey && mode == CW) || mode == HELL ) sk_transmit(); // hardware interface for HELL, do we need to support one?
+      else if( mode == CW ) paddles();                                      // terminal mode for HELL is probably better
       
       if( crh_tx_method == CRH_TX_TERM ) keyboard_input();  
        
@@ -2952,49 +2959,22 @@ uint32_t tone2;
          led_on_timer = 600;
       }      
       else if( user[DISPLAY] == 0 ) asm("wait");     /* low current feature for field mode, wait for core timer interrupt( millis or Hell ) */
+
+   // !!!! debug prints !!!!
+
+  // if( ++mod == 5000 ){
+  //    Serial.print("Key Mode "); Serial.print( straightkey );
+  //    Serial.print("   transmitting "); Serial.println( transmitting );
+  //    mod = 0;
+  // }
       
    }  // end if new millisecond
-   
+
 }  //end loop
 
-/*    this is the float version of ft8_tx
-// there is a certain amount of noise with the tone detect using the core timer.  It is probably caused by interrupt latency from
-// millis() interrupts, serial interrupts, etc.  But the method used is useful as it works good enough to send wspr. And looking
-// at the waveform using the arduino plotter may be causing some of the noise. 
-void ft8_tx( float val ){
-long dds_val;
-static uint32_t tm;
-static float tval;
-static int count;
-
-  if( val < 200 || val > 3000 ) return;
-
-  val = median( val );
-  tval += val;
-  ++count;
-  
-  // 3ms updates, 333 baud.  10ms updates, 100 baud
-  if( millis() - tm < 10 ) return;
-  tm = millis();
-
-  val = tval / (float)count;
-  count = 0;  tval = 0.0;
-
-  dds_val = (long)(( tx_vfo + val )  * (268.435456e6 / Reference ));  
-  wspr_to_freq( dds_val );
-
-  // !!! debug on arduino plotter
-  // static uint8_t mod2;
-  // mod2 = ( mod2 + 1 ) & 3;
-  //if( mod2 ) return;
-  // Serial.println(val);
-  
-}
-*/
 
 
-// ft8_tx version using 25ns ticks, about the same noise as the float version except this one is dead on frequency without any 
-// fudge factors
+// ft8_tx version using 25ns ticks.  Higher tones have more noise perhaps due to linear interpolation of a sine wave in digi_core.
 void ft8_tx( uint32_t val ){
 long dds_val;
 static uint32_t tm;
@@ -3008,11 +2988,11 @@ float val2;
   tval += val;
   ++count;
   
-  // 3ms updates, 333 baud.  10ms updates, 100 baud
-  if( millis() - tm < 10 ) return;
+  // 3ms updates, 333 baud.  10ms updates, 100 baud.  20ms is 50 updates a second
+  if( millis() - tm < 20 ) return;
   tm = millis();
 
-  val2 = (float)tval / (float)count;          // average value over N ms, N = 10 for now
+  val2 = (float)tval / (float)count;          // average value over N ms
   val2 = 40000000.0f / val2;                  // convert ticks to audio tone
   count = 0;  tval = 0;
 
@@ -3774,10 +3754,10 @@ int val;
 static int duty;
 char buf[35];
 
-   if( transmitting && mode == DIGI ) battery_value = 80;                 // fake for digi
-   else{
+   //if( transmitting && mode == DIGI ) battery_value = 80;                 // fake for digi
+   //else{
       noInterrupts();  battery_value = analogRead( BATTERYCHK );  interrupts();
-   }
+   //}
    //if( user[DISPLAY] == 0 ) battery_value = analogRead( BATTERYCHK );  // battery saver mode
    
    bat = battery_value * 10;   /* scaling up by 10 */
@@ -4184,10 +4164,10 @@ int done;
 
  /* prepare for next command */
    len = expect_len= 0;
-   if( cmd != '?' ){
+   //if( cmd != '?' ){
      stage('G');       /* they are all good commands */
      stage('\r');
-   }
+   //}
 }
 
 int lookup_len(char cmd2){     /* just need the length of the command */
@@ -4389,10 +4369,10 @@ char cmd2;
         loadbuffer();
      break;
      case '0': 
-        transmit(OFF); 
+        noInterrupts(); transmit(OFF); interrupts();
         update_frequency(NO_DISPLAY_UPDATE);
      break;
-     case '1':  transmit(ON);  break;
+     case '1': noInterrupts(); transmit(ON); interrupts();  break;
    }
 
 }
@@ -4805,7 +4785,7 @@ static int on_off;
 }
 
 //  tone detection based upon counting 25 ns ticks since last zero cross
-//  FT8 etc modes tx tone detection, DDS updated from loop.  This one is on frequency.
+//  FT8 etc modes tx tone detection, DDS updated from loop.
 uint32_t digi_core( uint32_t timer ){
 int data;
 static int last;
@@ -4835,41 +4815,10 @@ uint32_t tm;
       return timer + CORE_TICK_RATE/3;                  // vox check only, 3k sample rate 
   }
    
-  return timer + CORE_TICK_RATE/20;                     // 20k sample rate when transmitting
+  return timer + CORE_TICK_RATE/25;                     // sample rate when transmitting
   
 }
 
-
-/*
-//  tone detection based upon counting interrupts and figuring a fraction of an interrupt
-//  FT8 etc modes tx tone detection, DDS updated from loop. 
-uint32_t digi_core( uint32_t timer ){
-int data;
-static int last;
-static int counts;
-static float fract;
-
-  data = analogRead( FT8_PIN ) - 512;
-  ++counts;
-
-  if( data > 0 && last <= 0 ){                          // zero cross detected
-           tone_ = (float)counts + fract;               // add the amount past zero last cycle
-           float spread = (float)( data - last );       // last is always negative here
-           fract = ( (float)(data)/spread );
-           tone_ -= fract;                              // subract the amount we went past zero cross this time
-           //tone_ = 20000.0f / tone_;
-           tone_ = (20000.0f - 256.0f)/tone_;           // resulting tone is high for some reason, interrupt latency?
-           tone_available = 1;
-           counts = 0;     
-  }
-  last = data;
-
-  if( abs(data) > 31 ) digi_vox = 11;                          // 10ms vox hang time
-  if( digi_vox == 0 ) return timer + CORE_TICK_RATE/3;         // vox check only, 3k sample rate 
-  return timer + CORE_TICK_RATE/20;                            // 20k sample rate when transmitting
-  
-}
-*/
 
 
 /*  core timer function for fft processing */
@@ -5166,9 +5115,7 @@ void setup()
    Band_Set_40_20M();        //  test for band switch board or jumper on for 40 meters
    digitalWrite ( FREQ_REGISTER_BIT, LOW);  /* receive mode on power up */ 
    digitalWrite ( PSEL_PIN, LOW);  /* pin was left unitialized */ 
-   
-   straightkey= readpaddle();
-   
+      
    en_dir= 0;
    en_lval= read_encoder();
 
@@ -5337,7 +5284,8 @@ int i;
    nokia = user[DISPLAY] = top_menu2( user[DISPLAY], &display_menu );
    if( nokia == 0 ) mode = CW, sideband_mode = NORMAL;
   
-   
+   straightkey= readpaddle();          // auto detect when ring is shorted to ground.
+
   // if we have a display then show the other menu's
    if( user[DISPLAY] || SERIAL_MENUS ){
 
@@ -5399,7 +5347,7 @@ int i;
      // cat emu menu
      if( crh_tx_method == CRH_TX_PERL ) cat_emu = ARGO_EMU;      // if using the perl gui then need to force TenTec emulation
      else if( crh_tx_method == CRH_TX_TERM ) cat_emu = NO_EMU;   // dumb terminal program on serial port, so no CAT emulation
-     else if( mode != DIGI )  cat_emu = top_menu2( cat_emu, &cat_menu );   
+     else cat_emu = top_menu2( cat_emu, &cat_menu );   
                     
      // band limits menu
      band_limits = top_menu2( band_limits, &license_menu );
@@ -5468,7 +5416,7 @@ int i;
      }
      */
      
-     if( mode == MEM_TUNE ) user[LOCK] = 1,  mem_tune = 2; // 2 forces inititalization of memory tuning 
+     if( mode == MEM_TUNE ) user[LOCK] = 1,  mem_tune = 2; // 2 forces inititalization of memory tuning
                                                          
    }  // end of if we have a display menu's
    
@@ -5499,13 +5447,12 @@ int i;
      attachCoreTimerService( psk_mod_core );
    }
    
-   // low power mod if implimented will reduce power with switch in off position. Enable for all modes now as might be useful for
-   // tuning up an antenna with 500 mw.
-   // if( mode == RTTY || mode == PSK31 || mode == MFSK ){ 
+   // low power mod if implimented will reduce power with switch in off position. Enable for most modes as it will serve as a 
+   // low power tune mode
    if( mode != WSPR ){               // wspr very low power with switch off, hardly lights the LED on my 4 state tuner
      pinMode(PSK_MOD_PIN, OUTPUT);   // enable 500mw to 1000 mw low power for other modes
-     LATFCLR = PSK_MOD;
-   } 
+   }
+   LATFCLR = PSK_MOD;
 
 }
 
@@ -5856,6 +5803,7 @@ long mod;
     return 0;
 }
 
+// !!! fix attach detach for new modes
 void memory_tune(){     // cycle through the wefax memory channels
 int i;
 int new_band;
