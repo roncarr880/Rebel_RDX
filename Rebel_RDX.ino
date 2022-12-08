@@ -1,14 +1,21 @@
 
 //!!!! to do list
 //  fix the paddles code to use the new mode A, B, ULT code
-//  memory tune core timer setups
+//    existing works well but is somewhere between A and B modes
+//  memory tune mode core timer setups for DIGI others
 //  extra Transmit at end after return to receive, think may be RF in the shack
-//  Red flash select leds on tx, is this the out of gas indication?
+//    now think it is just display not returned to S meter? tdown last power check? Commented last power check.
+//  Red flash select leds on tx, is this the out of gas indication or high/low power
+//    It is the battery check, code expects 12.5 volts or 10 nicads.  No issue.
+//    While transmitting, battery check on select leds.  Power out on function leds.
 
 // uno32 program for the TenTec REBEL
 
-// This program allows the Rebel to operate in CW, RTTY, WSPR, PSK31, HELL modes with a simple terminal program,
-// or in FT8, FT4, JS8  modes with an appropriate program running on a computer.
+// This program allows the Rebel to operate in CW, RTTY, MFSK, PSK31, HELL(txonly) modes with a simple terminal program,
+// It also can operate in FT8, FT4, JS8, etc. computer modes.
+// It also can operate as a standalone WSPR beacon.  ( low power mod needed/desired )
+
+// A nokia display is very useful but not required. The radio will work in most modes without a display.
 
 // by K1URC 
 
@@ -2763,7 +2770,6 @@ long sample;
 uint32_t tone2;
 //static int mod;    // !!! debug
 
-//  !!!!! below is just a temporary safeguard  
 //   digitalWrite(TX_OUT,LOW);       // turn off TX just in case we made a mistake
 
    
@@ -2838,7 +2844,7 @@ uint32_t tone2;
             LATGCLR = DDS_SEL;  /* back to rx vfo */
             /* final battery and power out check */
             battery(1);
-            power_out();
+            //power_out();
             led_on_timer = 600;
          }
       }
@@ -2974,7 +2980,7 @@ uint32_t tone2;
 
 
 
-// ft8_tx version using 25ns ticks.  Higher tones have more noise perhaps due to linear interpolation of a sine wave in digi_core.
+// ft8_tx version using 25ns ticks.
 void ft8_tx( uint32_t val ){
 long dds_val;
 static uint32_t tm;
@@ -2989,21 +2995,19 @@ float val2;
   ++count;
   
   // 3ms updates, 333 baud.  10ms updates, 100 baud.  20ms is 50 updates a second
-  if( millis() - tm < 20 ) return;
+  if( millis() - tm < 10 ) return;             // 5ms is 1/32 baud overlap of 6 baud, 10ms 1/16 fuzzy area
   tm = millis();
 
   val2 = (float)tval / (float)count;          // average value over N ms
+  if( val2 == 0 ) return;
   val2 = 40000000.0f / val2;                  // convert ticks to audio tone
   count = 0;  tval = 0;
-
+  
   dds_val = (long)(( tx_vfo + val2 )  * (268.435456e6 / Reference ));  
   wspr_to_freq( dds_val );
 
-  // !!! debug on arduino plotter
-  // static uint8_t mod2;           // slow down prints if 3ms updates
-  // mod2 = ( mod2 + 1 ) & 3;
-  //if( mod2 ) return;
-  //Serial.println(val2);
+  // debug on arduino plotter
+  // Serial.println(val2);
 }
 
 
@@ -3022,28 +3026,7 @@ uint8_t j,i,k;                               // low, median, high
    if( vals[i] > vals[k] ) i = k;           // is higher than the high guess
 
    return vals[i];
-
 }
-
-/* float version of median
-float median( float val ){
-static float vals[3];
-static uint8_t in;
-uint8_t j,i,k;                               // low, median, high
-
-   vals[in] = val;
-   ++in;
-   if( in > 2 ) in = 0;
-
-   j = 0, i = 1, k = 2;                     // pretend they are in the correct order
-   if( vals[j] > vals[k] ) k = 0, j = 2;    // swap guess high and low
-   if( vals[i] < vals[j] ) i = j;           // is lower than the low guess, pick that one instead
-   if( vals[i] > vals[k] ) i = k;           // is higher than the high guess
-
-   return vals[i];
-
-}
-*/
 
 
 
@@ -3135,157 +3118,6 @@ int i;
 }
 
 
-
-/*
-#define JTBUFSIZE 30
-/* since we are running the serial line for several different processes we need a replacement for command messenger 
-void jt_serial(){
-char temp;
-static int row,col;
-static char command[JTBUFSIZE];
-static int index;
-int res;
-
-  if( Serial.available() == 0 ) return;
-  temp = Serial.read();
-  if( temp == '\r' || temp == '\n' ) return;
-
-  if( temp != ',' && temp != ';' ) command[index++] = temp;
-
-  if( index >= JTBUFSIZE ){    // error - should probably flag the operator somehow
-     index = 0;
-     return;
-  }
-  
-  command[index] = 0;
-  
-  if( temp == ';' || temp == ',' ){
-    res = do_jt( temp , command);
-    
-    
-  // debug - don't know what it is so print on the top line
-     if( res == 0 && col < 14){
-        command[index++]= temp;    // put the terminator back in the string
-        command[index]= 0; 
-        lcd_goto(row,col*6);
-        lcd_puts(command);
-        col += strlen(command);
-        //if( col >= 14 ) col= 0;
-     }
-
-    index= 0;    
-  }  
-}
-
-int do_jt( char term, char *arg ){
-static int cmd;
-int rval;        // return value and command continue
-int temp;
-static int rx_off, tx_off;       // hiding these so can control offsets with Rebel, yet want to report back to hfwst that all is ok
-
-  rval = 1;
-  if( cmd == 0 ){
-    cmd = atoi(arg);
-    if( term == ';' ) ++rval;     // command is complete with no commas
-  }
-  else rval= 2;                   // command continue hopefully
-  
-  if( rval == 2 ){
-     switch( cmd ){
-       case 2:  jt_ack(); stage_str("1005");          break;     // version
-       case 3:  jt_ack(); stage_str("AD9834");        break;     // dds
-       case 4:  jt_ack(); stage_str("49999750");      break;     // send fake reference  
-       case 10: rx_off = atoi(arg);           // no break;
-       case 8:  jt_ack(); stage_num(rx_off);    break;     // rx fudge factor changed to local dummy vars
-       case 11: tx_off = atoi(arg);           // no break;
-       case 9:  jt_ack(); stage_num(tx_off);    break;     // tx fudge factor now just local dummy var
-       case 12: jt_ack();                                        // band
-         // switch(band){
-         //    case 0: temp = 40; break;                         // HFWST only works on 40 and 20
-         //    case 1: temp = 30; break;                         // faking stuck on 20 so can work 30 and 17 also
-         //    case 2: temp = 20; break;                         // only issue should be the logging frequency will
-         //    case 3: temp = 17; break;                         // need changing each time contact is saved
-         //}
-          stage_str( "20" );                                       // always reporting 20 m
-       break;
-       case 14: jt_fcalc0 = atol(arg); // jt_to_freq0(jt_fcalc0);   // no break  // set rx dds word    
-       case 13: jt_ack(); stage_long_str( jt_fcalc0 );   break;  // rx dds word       
-       case 15: jt_ack(); stage_num(transmitting);    break;     // tx status
-       case 7:  jt_ack(); stage_num(1000);            break;     // loops per second for us is exact
-       case 23: jt_ack(); stage_num(23);              break;     // ready to load valuse
-       case 26: jt_ack(); jt_dump_vals();             break;     // report the dds words for jt message
-       case 22: jt_ack(); stage_num(22); jt_clr_vals();  break;  // clear the buffer
-       case 24: jt_load_vals(term,arg);               break;
-       case 16: jt_ack(); stage_num(16); jt_tx_on = 1;  jt_tx_index= 0; break;          // start tx  
-       case 18: jt_ack(); stage_num(18); if( jt_tx_index < 123) jt_tx_on = 0;  break;   // stop tx unless almost done
-       case 19: jt_ack(); stage_num(19);  stage(',');                                   // start with offset
-                jt_tx_index = atoi(arg); if( jt_tx_index < 45 && jt_tx_index >= 0 ) jt_tx_on = 1;
-                stage_num( jt_tx_index );
-       break;         
-   
-       default: stage('0,'); stage_num(cmd); cmd = 0; rval= 0;  break;   // unknown command      
-     }
-  }
-  
-  if( term == ';' ){
-    cmd = 0;   // end of the command
-    stage_str(";\r\n");
-  }
-  
-  /// debug  only  - show the command if followed by a comma
-  // if( rval == 1 && term == ',' ) return 0;
-  
-  return rval;
-}
-
-void jt_ack(){
-   stage_str("1,"); 
-}
-
-void jt_load_vals( char term, char * arg ){   // blocks of 4
-static int state;
-static int base;
-static int i;
-int j;
-   
-   switch(state){
-       case 0:   ++state;  stage_num(24); // no break;               // just got the command
-       case 1:   base = atoi(arg);  ++state;  i= 0; stage(',' ); stage_num(base); 
-                 //lcd_goto(0,0);    lcd_puts(arg);   lcd_putch(term);  // debug only show base on screen
-       break;     // get the base
-       case 2: 
-         j= 4*(base-1) + i;
-         if( j >= 0 && j < 128 ){
-            jt_buf[j] = atol( arg );
-            stage( ',');
-            stage_long_str( jt_buf[j] );
-         }
-         ++i;
-         i &= 3;       // keep in range of 0 to 3         
-   }
-   
-   if( term == ';' ) state = base = i = 0;  
-}
-
-
-void jt_dump_vals(){
-int i;
-
-   stage_str("FSK VALUES FOLLOW");
-   for( i= 0; i < 126; ++i ){
-      stage(',');
-      stage_num( jt_buf[i] );
-      while(un_stage());                  // too much data for the buffer
-   }
-   timeout_ok = 3;
-}
-
-void jt_clr_vals(){
-int i;
-
-  for( i = 0; i < 128; ++i ) jt_buf[i] = 0;  
-}
-*/
 
 /* run the dft and code decoding algorithms */
 /* this is an original algorithm based upon an intermediate equation in the FFT derivation */
@@ -4563,7 +4395,7 @@ long delta;
 /*   WSPR  core timer function */
 // #define WSPRTICK 27307472     // 1 bit time for 1.4648 baud. was a typo here?  seems to work ok
 // #define WSPRTICK 27307482     // 1 bit time for 1.4648 baud.  
-#define WSPRTICK 27306667        // or should it be 1.46484375 baud.  120000/8192
+#define WSPRTICK 27306667        // or should it be 1.46484375 baud.  12000/8192
 
 uint32_t  wspr_core( uint32_t timer ){
 static int count;
@@ -4784,8 +4616,10 @@ static int on_off;
    }
 }
 
+
+
 //  tone detection based upon counting 25 ns ticks since last zero cross
-//  FT8 etc modes tx tone detection, DDS updated from loop.
+//  FT8 etc modes tx tone detection, DDS updated from loop
 uint32_t digi_core( uint32_t timer ){
 int data;
 static int last;
@@ -4793,6 +4627,7 @@ static uint32_t start_tm;                               // last timer value
 static uint32_t total_tm;
 uint32_t fraction;                                      // counts past zero cross
 uint32_t tm;
+int spread;
 
 
   data = analogRead( FT8_PIN ) - 512;
@@ -4801,7 +4636,7 @@ uint32_t tm;
   total_tm += tm;
 
   if( data > 0 && last <= 0 ){                          // zero cross detected
-      int spread = data-last;                           // last is always negative
+      spread = data-last;                               // last is always negative
       fraction =  ( data * tm ) / spread;               // ticks past zero
       tone_ = total_tm - fraction;                      // sub ticks past zero cross
       total_tm = fraction;                              // add fraction past zero as start amount for next cycle
@@ -4815,7 +4650,7 @@ uint32_t tm;
       return timer + CORE_TICK_RATE/3;                  // vox check only, 3k sample rate 
   }
    
-  return timer + CORE_TICK_RATE/25;                     // sample rate when transmitting
+  return timer + CORE_TICK_RATE/21;                     // sample rate when transmitting
   
 }
 
@@ -6335,3 +6170,162 @@ int d;
    stage_str("\r\n   };");
 }
 #endif
+
+
+
+/*  JT65 code that worked with a special version of wsjt.  Was sort of buggy and think the issue was with the wsjt side as the
+ *  standard jt65 rebel code also had hang ups.
+ *  
+ *  New DIGI mode makes this obsolete.
+ */
+
+/*
+#define JTBUFSIZE 30
+/* since we are running the serial line for several different processes we need a replacement for command messenger 
+void jt_serial(){
+char temp;
+static int row,col;
+static char command[JTBUFSIZE];
+static int index;
+int res;
+
+  if( Serial.available() == 0 ) return;
+  temp = Serial.read();
+  if( temp == '\r' || temp == '\n' ) return;
+
+  if( temp != ',' && temp != ';' ) command[index++] = temp;
+
+  if( index >= JTBUFSIZE ){    // error - should probably flag the operator somehow
+     index = 0;
+     return;
+  }
+  
+  command[index] = 0;
+  
+  if( temp == ';' || temp == ',' ){
+    res = do_jt( temp , command);
+    
+    
+  // debug - don't know what it is so print on the top line
+     if( res == 0 && col < 14){
+        command[index++]= temp;    // put the terminator back in the string
+        command[index]= 0; 
+        lcd_goto(row,col*6);
+        lcd_puts(command);
+        col += strlen(command);
+        //if( col >= 14 ) col= 0;
+     }
+
+    index= 0;    
+  }  
+}
+
+int do_jt( char term, char *arg ){
+static int cmd;
+int rval;        // return value and command continue
+int temp;
+static int rx_off, tx_off;       // hiding these so can control offsets with Rebel, yet want to report back to hfwst that all is ok
+
+  rval = 1;
+  if( cmd == 0 ){
+    cmd = atoi(arg);
+    if( term == ';' ) ++rval;     // command is complete with no commas
+  }
+  else rval= 2;                   // command continue hopefully
+  
+  if( rval == 2 ){
+     switch( cmd ){
+       case 2:  jt_ack(); stage_str("1005");          break;     // version
+       case 3:  jt_ack(); stage_str("AD9834");        break;     // dds
+       case 4:  jt_ack(); stage_str("49999750");      break;     // send fake reference  
+       case 10: rx_off = atoi(arg);           // no break;
+       case 8:  jt_ack(); stage_num(rx_off);    break;     // rx fudge factor changed to local dummy vars
+       case 11: tx_off = atoi(arg);           // no break;
+       case 9:  jt_ack(); stage_num(tx_off);    break;     // tx fudge factor now just local dummy var
+       case 12: jt_ack();                                        // band
+         // switch(band){
+         //    case 0: temp = 40; break;                         // HFWST only works on 40 and 20
+         //    case 1: temp = 30; break;                         // faking stuck on 20 so can work 30 and 17 also
+         //    case 2: temp = 20; break;                         // only issue should be the logging frequency will
+         //    case 3: temp = 17; break;                         // need changing each time contact is saved
+         //}
+          stage_str( "20" );                                       // always reporting 20 m
+       break;
+       case 14: jt_fcalc0 = atol(arg); // jt_to_freq0(jt_fcalc0);   // no break  // set rx dds word    
+       case 13: jt_ack(); stage_long_str( jt_fcalc0 );   break;  // rx dds word       
+       case 15: jt_ack(); stage_num(transmitting);    break;     // tx status
+       case 7:  jt_ack(); stage_num(1000);            break;     // loops per second for us is exact
+       case 23: jt_ack(); stage_num(23);              break;     // ready to load valuse
+       case 26: jt_ack(); jt_dump_vals();             break;     // report the dds words for jt message
+       case 22: jt_ack(); stage_num(22); jt_clr_vals();  break;  // clear the buffer
+       case 24: jt_load_vals(term,arg);               break;
+       case 16: jt_ack(); stage_num(16); jt_tx_on = 1;  jt_tx_index= 0; break;          // start tx  
+       case 18: jt_ack(); stage_num(18); if( jt_tx_index < 123) jt_tx_on = 0;  break;   // stop tx unless almost done
+       case 19: jt_ack(); stage_num(19);  stage(',');                                   // start with offset
+                jt_tx_index = atoi(arg); if( jt_tx_index < 45 && jt_tx_index >= 0 ) jt_tx_on = 1;
+                stage_num( jt_tx_index );
+       break;         
+   
+       default: stage('0,'); stage_num(cmd); cmd = 0; rval= 0;  break;   // unknown command      
+     }
+  }
+  
+  if( term == ';' ){
+    cmd = 0;   // end of the command
+    stage_str(";\r\n");
+  }
+  
+  /// debug  only  - show the command if followed by a comma
+  // if( rval == 1 && term == ',' ) return 0;
+  
+  return rval;
+}
+
+void jt_ack(){
+   stage_str("1,"); 
+}
+
+void jt_load_vals( char term, char * arg ){   // blocks of 4
+static int state;
+static int base;
+static int i;
+int j;
+   
+   switch(state){
+       case 0:   ++state;  stage_num(24); // no break;               // just got the command
+       case 1:   base = atoi(arg);  ++state;  i= 0; stage(',' ); stage_num(base); 
+                 //lcd_goto(0,0);    lcd_puts(arg);   lcd_putch(term);  // debug only show base on screen
+       break;     // get the base
+       case 2: 
+         j= 4*(base-1) + i;
+         if( j >= 0 && j < 128 ){
+            jt_buf[j] = atol( arg );
+            stage( ',');
+            stage_long_str( jt_buf[j] );
+         }
+         ++i;
+         i &= 3;       // keep in range of 0 to 3         
+   }
+   
+   if( term == ';' ) state = base = i = 0;  
+}
+
+
+void jt_dump_vals(){
+int i;
+
+   stage_str("FSK VALUES FOLLOW");
+   for( i= 0; i < 126; ++i ){
+      stage(',');
+      stage_num( jt_buf[i] );
+      while(un_stage());                  // too much data for the buffer
+   }
+   timeout_ok = 3;
+}
+
+void jt_clr_vals(){
+int i;
+
+  for( i = 0; i < 128; ++i ) jt_buf[i] = 0;  
+}
+*/
