@@ -1,41 +1,23 @@
 
 //!!!! to do list
-//  fix the paddles code to use the new mode A, B, ULT code
-//    existing works well but is somewhere between A and B modes
-//  memory tune mode core timer setups for DIGI others
-//  extra Transmit at end after return to receive, think may be RF in the shack
-//    now think it is just display not returned to S meter? tdown last power check? Commented last power check.
-//  Red flash select leds on tx, is this the out of gas indication or high/low power
-//    It is the battery check, code expects 12.5 volts or 10 nicads.  No issue.
-//    While transmitting, battery check on select leds.  Power out on function leds.
+//  test the paddles code
 
 // uno32 program for the TenTec REBEL
 
 // This program allows the Rebel to operate in CW, RTTY, MFSK, PSK31, HELL(txonly) modes with a simple terminal program,
-// It also can operate in FT8, FT4, JS8, etc. computer modes.
+// It also can operate in digi modes FT8, FT4, JS8, etc. wsjt-x modes with or without CAT control.
 // It also can operate as a standalone WSPR beacon.  ( low power mod needed/desired )
 
 // A nokia display is very useful but not required. The radio will work in most modes without a display.
+// DDS frequency drift is an issue for DIGI mode WSPR
 
-// by K1URC 
+// by KE1MU 
 
 /* 
  Important - before using: 
  change the call sign in the CQ message 
  change the WSPR message before transmitting WSPR
-*/
 
-/*
- * The program is written to use either no display or a Nokia display.  
- * If you have an I2C display or 2 line LCD you can move the FT8 routines into your sketch.
- * Look for digi_core(), ft8_tx(), wspr_to_freq(), digi_setup() and how they are called.
- * The transmitter is keyed using vox, cable the audio into the paddle jack.  
- * Watch for analog reads in your main code, they will probably need to be
- * guarded from interrupts with noInterrupts(), interrupts()
- */
-
-
-/*  
 
 Hardware mods:
 
@@ -51,7 +33,6 @@ The plus side of cap towards resistor and pin 33.
  Pin 33 ---\/\/\/--||---*---------Pin A11
                    ||
 
-( I have some RF in the shack using the audio cable, I may add some bypass caps on DIT an DAH, about 1nf )
 
 Morse decoder:
  The code read function has been changed to the cw speed pot.  The center of the pot is connected to the output
@@ -85,7 +66,7 @@ PSK31:
  The code read and bandscope needs the nokia display in order to be useful.  Coderead will work without 
  the display but it will be extremely difficult to tune the signal in correctly without the bandscope. An
  alternate to the nokia display would be to run the radio audio to a waterfall display like in fldigi 
- and use the serial terminal and serial menu options. 
+ and use the serial terminal and serial menu options or this program. 
 
 
 // Other mods I have done that do not need to be implemented.
@@ -114,15 +95,16 @@ PSK31:
    double tap = back
    long press = select for user function - toggles an option on or off
    long press function = frequency announce   
-   8 options for user functions - long press of select will toggle the function on/off
-      mode menu - cw or rtty or one of the added modes ( psk,mfsk,hell,wspr,Digi,memory tuning )
-      CodeRead  ( or turns on the LED s meter if no display )
-      Spot auto tune
-      Send CQ
-      Band Change 
-      Split mode
-      VFO B mode
-      Lock VFO's
+   8 options for user functions ( Function Led Red ) - long press of select will toggle the function on/off
+                       Select Led's indication
+      mode menu        blank 
+      CodeRead         Green ( or turns on the LED s meter if no display )
+      Spot auto tune   Yellow
+      Send CQ          Red
+      Band Change      Green + Yellow
+      Split mode       Green + Red
+      VFO B mode       Yellow + Red
+      Lock VFO's       Green + Yellow + Red
    The LED's blank when not pressing buttons to save rx current.
 
    Long press Select when function is Step, brings up the keyer speed menu.
@@ -131,9 +113,12 @@ PSK31:
    Press the Function button to exit menu setups.
    The nokia display has help text on the S meter line as what you will get with a long press of select.
 
+   There is a tx disable feature for CW key down longer than 15 seconds.  Press function to enable again.
+   There is tx lockout by USA license class, setup is below.  For CW practice tune out of band, get sidetone but no RF out.
+
      
 The basic idea of this program for the rebel is it can be used portable without the display, or used in the 
-shack with the display and computer control.  The default is field mode with battery saving 80 ma current.
+shack with the display and/or computer control.  The default is field mode with battery saving 80 ma current on RX.
 On startup, the mode menu will display and one can easily change to display mode when in the shack.
 
   
@@ -145,17 +130,26 @@ On startup, the mode menu will display and one can easily change to display mode
 
 // Without a display, compile in the defaults you want/need.
 // Power up, pause 10 seconds.
-// Tap select (to exit the menu's you can't see). To enter FT8 DIGI modes, change the function
-// to BW.  Long press Select.
+// Tap select (to exit the menu's you can't see). To enter FT8 DIGI modes, change the function to BW.  Long press Select.
 // Cable headphone to computer MIC in,  computer audio out to paddle jack.  Use a good amount of audio drive.
 // Use CAT control if desired( TenTec Argo V or Elecraft K3 ). You can use WSJT-X to set the frequency.
 // Transmitter is keyed by Vox.
+
+
 // The LED's indicate the frequency in binary.  An example for 20 meters:
 //   The radio starts at 14060.  60 will display in the LEDs as Select green and yellow on, Function LEDs not lit is a zero.
 //   Tune up to 14074.  At 14074, the Select LED's will all be lit showing 7, the Function LEDs will be only Green lit showing a 4.
 //   Binary weighted, Green = 4, Yellow = 2, Red = 1.  To show 8 and 9, one or two of the LEDs will dim.
-//   ( If the TT LED is dim, you should center the RIT control. RIT is now disabled in DIGI mode )
+//   ( If the TT LED is dim, you should center the RIT control. RIT is disabled in DIGI and WSPR mode )
 
+/*
+ *  The LED's have many shared uses some of which can be disabled:
+ *    Select and Function as in the original TenTec code with 8 user functions instead of 3.
+ *    Frequency display in binary.
+ *    Voltage(left) and power(right) during transmit.
+ *    The TenTec LED shows split status(blinks), RIT enabled(dim), and TX lockout(bright).
+ *    
+ */
 
 #include "TT.h"         // original TT defines for pinmode setup
 #include "K1_morse.h"   // also has baudot table.  Renamed as conflicts with Library with name morse.h  
@@ -172,14 +166,15 @@ On startup, the mode menu will display and one can easily change to display mode
 // on first open of the serial port the chipKit UNO32 will reset.  The 2nd try should work.  Serial prints in MPIDE
 // were blocking, not sure if they are under Arduino 1.8.13 but I left in the stage write code which works around the
 // serial write blocking issue.
-//#define BAUDRATE 1200      // TenTec Argo is 1200 baud.  Elecraft K3 is 38400?
-#define BAUDRATE 57600   // for fast printing of debug information, may work for Argo CAT also
+#define BAUDRATE 1200      // TenTec Argo is 1200 baud.  Elecraft K3 is 38400?
+//#define BAUDRATE 57600   // for fast printing of debug information, may work for Argo CAT also
 
 /* !!! change this to your call or whatever message you wish to auto transmit */
-const char cq_msg[] = "CQ CQ CQ CQ DE K1URC K1URC K1URC K";    /* must use capital letters here */
+const char cq_msg[] = "CQ CQ CQ CQ DE KE1MU KE1MU KE1MU K";    /* must use capital letters here */
 
 /*  !!! change this if you will use the WSPR transmitting feature */
-//      Download WSPRcode.exe from  http://physics.princeton.edu/pulsar/K1JT/WSPRcode.exe   and run it in a dos window 
+//      Download WSPRcode.exe from  http://physics.princeton.edu/pulsar/K1JT/WSPRcode.exe   and run it in a dos window
+//      Bad link now, WSJT moved to SourcForge...
 //      Type (for example):   WSPRcode "K1ABC FN33 37"    37 is 5 watts, 30 is 1 watt, 33 is 2 watts, 27 is 1/2 watt
 //      ( Use capital letters in your call and locator when typing in the message string.  No extra spaces )
 //      Using the editing features of the dos window, mark and copy the last group of numbers
@@ -187,19 +182,26 @@ const char cq_msg[] = "CQ CQ CQ CQ DE K1URC K1URC K1URC K";    /* must use capit
 //      Remove the comma on the end
 //      Paste the result below in place of this group of numbers
 //  WSPR is a high duty cycle mode with a key down time of almost 2 minutes.  You will need a heat sink mod or reduce power.
-//  the current message is   "K1URC FN54 23"
-const char wspr_msg[] = { 
- 3, 3, 2, 2, 2, 0, 0, 2, 1, 2, 0, 2, 1, 1, 1, 2, 2, 2, 3, 0, 0, 1, 0, 1, 1, 3, 3, 2, 2, 0,
- 2, 2, 0, 0, 3, 2, 0, 3, 0, 1, 2, 0, 2, 0, 0, 2, 3, 0, 1, 3, 2, 0, 1, 1, 2, 1, 0, 2, 0, 3,
- 3, 2, 3, 2, 2, 2, 2, 1, 3, 2, 3, 0, 3, 0, 3, 0, 3, 2, 0, 3, 2, 0, 3, 0, 3, 1, 0, 2, 0, 1,
- 1, 2, 1, 2, 3, 0, 2, 2, 3, 2, 2, 0, 2, 2, 1, 0, 2, 1, 2, 0, 3, 3, 1, 2, 3, 1, 2, 2, 3, 1,
- 2, 1, 2, 0, 0, 1, 1, 3, 2, 2, 2, 2, 0, 1, 0, 1, 2, 0, 3, 1, 0, 2, 0, 0, 2, 2, 0, 1, 3, 0,
- 1, 2, 3, 1, 0, 2, 2, 1, 3, 0, 2, 2
+//  the current message is   "KE1MU FN54 23"
+const char wspr_msg[] = {
+      3, 1, 2, 2, 0, 2, 2, 2, 3, 2, 2, 2, 1, 1, 3, 2, 0, 0, 3, 0, 0, 1, 0, 1, 3, 3, 1, 2, 0, 2,
+      0, 2, 2, 2, 3, 2, 0, 1, 0, 1, 2, 2, 0, 0, 0, 0, 3, 0, 3, 1, 2, 0, 3, 1, 0, 1, 2, 0, 2, 3,
+      1, 2, 3, 2, 0, 0, 0, 1, 1, 2, 1, 0, 1, 2, 3, 0, 1, 0, 2, 3, 0, 0, 3, 0, 3, 1, 0, 2, 0, 3,
+      3, 2, 3, 2, 1, 0, 2, 2, 1, 2, 0, 0, 0, 2, 3, 2, 2, 1, 0, 2, 1, 3, 1, 0, 1, 1, 0, 0, 3, 1,
+      2, 3, 2, 0, 0, 1, 1, 3, 2, 2, 0, 2, 2, 3, 0, 1, 2, 0, 3, 1, 2, 2, 0, 0, 0, 2, 2, 1, 1, 0,
+      3, 2, 1, 1, 0, 2, 2, 1, 3, 0, 0, 2
  };
 
 #define WSPR_TX_OFFSET  38      // enter a number between -100 and 100 ( compile time option )
 
 #define SERIAL_MENUS 0      // define as 1 if wanted.  Useful if you don't have a nokia display. May interfer with CAT control.
+
+// keyer setup is a compile option
+#define WEIGHT 200        // extra weight for keyed element
+#define MODE_A 0
+#define MODE_B 1
+#define MODE_U 2          // Ultimatic mode
+uint8_t  KMODE = MODE_A;
 
 /******* menu defaults - set to what you use the most but can always change via the menu when operating *******/
 /* leave the defines alone and just change what is assigned to the variables */
@@ -227,7 +229,7 @@ int serial_decode = 0;    // when enabled sends the decoded morse or rtty on the
 #define JUMPERS 0
 #define TWO_BAND 1
 #define FOUR_BAND 2
-int band_switch = TWO_BAND;    // type of  band switch module installed ( or just the jumpers if none )
+int band_switch = FOUR_BAND;    // type of  band switch module installed ( or just the jumpers if none )
 
 
 int cut_num_enable = 0;   // cut_num_enable = 1 may be useful for when using the radio without a display
@@ -240,7 +242,6 @@ int rtty_on_leds = 0;     // when enabled the green led's will flash with the de
 
 /* sending method - for rtty one can use a hardware interface wired to the key jack, or use a terminal program */
 /* this also allows CW and Hellschreiber to be sent via a terminal program */
-/* the key jack will always send CW if not using RTTY with the hardware interface wired to the key jack */
 #define CRH_TX_KEY 0       // serial activity will be CAT if CAT is enabled
 #define CRH_TX_TERM 1      // using a terminal to send and receive
 #define CRH_TX_PERL 2      // using the Perl GUI - I don't think many users have tried this
@@ -273,11 +274,11 @@ const int sliding_offset_enable = 0;   // The offset changes via RIT control, pe
 
 int wpm = 14;
 
-#define TUNE_LED_DISP 1     // show freq on LED's even if have a Nokia display
+#define TUNE_LED_DISP 1     // show freq on LED's even if have a Nokia display, set to zero to disable this feature.
 #define MENU_TIMEOUT  35    // a long timeout is good for WSPR beacon setup, a short timeout, maybe 5,  would be good for a 
                             // radio with no display
 
-/****************   End of user options and default values - remember can always change in menu at runtime  *****************/
+/****************   End of user options and default values - can always change in menu at runtime  *****************/
 
 #define LSB 0
 #define USB 1
@@ -285,6 +286,7 @@ int wpm = 14;
 volatile uint32_t tone_;              // FT8 tone detection variables, tone_ is in 25ns ticks
 volatile uint8_t tone_available;
 volatile uint8_t digi_vox;
+//volatile int g_dp;                    //  just testing
 
 struct MEMORY {
   char   name_[15];
@@ -308,7 +310,7 @@ struct MEMORY {
 //    The 2nd way is handy when you know the ssb suppressed carrier frequency directly as in net frequecies or tuning WWV.
 //    For CW you need an offset or your transmit freq will result in a zero freq tone in the other guys receiver, he won't hear you.
 //  You can tune around a memory channel by unlocking the VFO.
-//  I removed my 4 band board and put in the two band, so only bands 0 and 2 have relays now.
+
 #define NOMEM 48
 const struct MEMORY memory[NOMEM] = {
    { "40m QRP",        7030000, 0, LSB, 800, CW },   
@@ -340,7 +342,6 @@ const struct MEMORY memory[NOMEM] = {
    { "New Orleans",  8503900, 1, USB, -1900 , WEFAX },
    { "Pt. Reyes",    8682000, 1, USB, -1900 , WEFAX },
    { "Northwood UK", 8040000, 1, USB, -1900 , WEFAX },
-  // { "Boston",       9110000, 1, USB, -1900 , WEFAX },    // the dds will be 110 khz for this one, image on 8890000
    { "Boston",      12750000, 1, USB, -1900 , WEFAX },
    { "New Orleans", 12789900, 1, USB, -1900 , WEFAX },
    { "Pt. Reyes",   12786000, 1, USB, -1900 , WEFAX },
@@ -348,9 +349,6 @@ const struct MEMORY memory[NOMEM] = {
    { "Honolulu",    11090000, 1, USB, -1900 , WEFAX },
    { "Tokoyo",      13988500, 2, USB, -1900 , WEFAX },
    { "Hamburg",     13882500, 2, USB, -1900 , WEFAX },
-   //{ "New Orleans", 17146400, 3, USB, -1900 , WEFAX },   
-   //{ "Pt. Reyes",   17151200, 3, USB, -1900 , WEFAX },
-   //{ "Taipei",      18560000, 3, USB, -1900 , WEFAX },
    { "Air Volmet",   6604000, 0, USB, 0 , SSB },
    { "Air NY E",     6628000, 0, USB, 0 , SSB },
    { "Air Carib A",  6577000, 0, USB, 0 , SSB },
@@ -372,6 +370,7 @@ int mem_tune = 0;
 
 #define PWR_WARN   1  // works with low power mod and wish to be notified if the power out is incorrent for the mode in use.
 
+//  Tx lockout by license class setup
 #define NUMBANDS 7                         // general has 6 segments 40 to 17 meters
    const int bandstart[5][NUMBANDS] = {
    {7000,14000,10100,18068,5331,0,0},           //extra
@@ -395,7 +394,7 @@ int sec  = 0;
 #define SAVE 0
 #define RESTORE 1
 
-/* LEDs */
+/* register masks for LEDs */
 #define FGRN  0x20     // all on port D
 #define FYEL  0x0800
 #define FRED  0x40
@@ -519,14 +518,13 @@ int  split = 0;
    freq display in LED - turns on when tuning, off after a delay
    display the 100khz and 10khz digits  or the 10khz and 1khz digits depending upon step size
    digits 8 and 9 are displayed in the 3 LED's by dimming the Yellow and Red for 8 and Yellow for 9
-   this only runs when no display is selected or if a define is set to 1
 */
 
 
 unsigned char user[8] = {0,0,0,0,0,0,0,0};   /* user flags  */
 
 /* announce and beacon buffer - set msb on characters to key xmit */
-#define ANNOUNCE_WPM 18      /* hardcoded  */
+#define ANNOUNCE_WPM 18
 #define TXQUESIZE 128        /* must be power of two */
 unsigned char  tx_queue[TXQUESIZE];
 int tx_in= 0;
@@ -540,7 +538,7 @@ int stg_in = 0;
 int stg_out = 0;
 
 
-// freqency is announced with cut numbers.
+// freqency is announced with cut numbers ( 10k auto announce )
 unsigned char cut_numbers[] = 
 { 0b11000000, 0b01000000, 0b00100000, 0b00010000, 0b00001000, 0b00000100, 0b10000100, 0b10001000, 0b10010000, 0b10100000 };
 
@@ -598,7 +596,8 @@ long save_tx_vfo[] = {7031000L, 10107000L, 14060000L, 18096000L};    // these ar
 long save_rx_vfo[] = {7031000L, 10107000L, 14060000L, 18096000L};
 int save_split[] = {0,0,0,0};
 
-int mode = CW;       /* default is CW and no display - ie field mode */
+//int mode = CW;       /* default is CW and no display - ie field mode */
+int mode = DIGI;
 int sliding_offset;
 
 // flags to modify what the tuning knob does
@@ -621,7 +620,8 @@ extern unsigned char BigNumbers[];
 //#define CONTRAST_D 5
 //#define MACRO_D 6
 
-int nokia = NO_DISPLAY;  // must be zero the first time we put up the menu as the dsp_core isn't running - otherwise weird bug
+//int nokia = NO_DISPLAY;  // must be zero the first time we put up the menu as the dsp_core isn't running - otherwise weird bug
+int nokia = NORM_D;
 int contrast = 70;       // 65
 int timeout_ok = 0;
 int save_nokia;           // save display setting when change to contrast or keyer speed screen
@@ -828,154 +828,6 @@ char c;
 }
 
 
-/*
-void scope_display(){
-int active;
-
-   active = scope_active + 1;
-   if( active == 4 ) scope_display1();
-   else if( active == 5 ) scope_display2();
-   else if( active == 6 ) active = 0;
-  
-   scope_active = active;
-   if( active == 0 ){
-     LCD.clrScr();
-     tuning_display();    
-   } 
-}
-
-int max1,max2;
-int min1,min2;
-
-void scope_display2(){   // graph
-int gmax,gmin;
-
-  timeout_ok = 2;
-  scope_active = 3;      // allow screen writes for this function
-  LCD.clrScr();
-//  gmax = ( max1 > max2 ) ? max1 : max2;
-//  gmin = ( min1 < min2 ) ? min1 : min2;
-//  if( gmin > 0 ) gmin = 0;
-//  if( gmax < 0 ) gmax = 0;
-  gmax = ( max1 < 0 ) ? 0 : max1;
-  gmin = ( min1 > 0 ) ? 0 : min1;
-  scope_graph( gmin,gmax,ch1_data,0 );
-  
-  gmax = ( max2 < 0 ) ? 0 : max2;
-  gmin = ( min2 > 0 ) ? 0 : min2;
-  scope_graph( gmin,gmax,ch2_data,3 );
-}
-
-void scope_display1(){   // data summary
-int i;
-int ave1,ave2;
-char buf[35];
-
-  scope_active = 3;     // sllow screen writes
-  LCD.clrScr();
-  ave1 = ave2 = 0;
-  max1 = max2 = -9999999;
-  min1 = min2 =  9999999;
-  for( i = 0; i < 80; ++i ){
-    ave1 += ch1_data[i];
-    ave2 += ch2_data[i];
-    if( ch1_data[i] > max1 ) max1 = ch1_data[i];
-    if( ch2_data[i] > max2 ) max2 = ch2_data[i];
-    if( ch1_data[i] < min1 ) min1 = ch1_data[i];
-    if( ch2_data[i] < min2 ) min2 = ch2_data[i];
-  }
-  ave1 /= 80;
-  ave2 /= 80;
-  
-  lcd_goto(0,0);
-  lcd_puts("max ");
-  itoa(max1,buf,10);
-  lcd_puts(buf);
-
-  lcd_goto(1,0);
-  lcd_puts("min ");
-  itoa(min1,buf,10);
-  lcd_puts(buf);
-  
-  lcd_goto(2,0);
-  lcd_puts("ave ");
-  itoa(ave1,buf,10);
-  lcd_puts(buf);
-
-  lcd_goto(3,0);
-  lcd_puts("max ");
-  itoa(max2,buf,10);
-  lcd_puts(buf);
-
-  lcd_goto(4,0);
-  lcd_puts("min ");
-  itoa(min2,buf,10);
-  lcd_puts(buf);
-
-  lcd_goto(5,0);
-  lcd_puts("ave ");
-  itoa(ave2,buf,10);
-  lcd_puts(buf);
-  
-}
-
-void scope_graph( int minv, int maxv, int vals[], int offset ){
-int val;
-int i;
-int zero;
-int row, zrow;
-int bdata, bzero;
-int temp;
-   
-   if( minv == maxv ) return;    // divide by zero in map ??
-   for( i = 0; i < 80; ++i ){
-      val = map( vals[i], minv, maxv, 24, 0 );   // inverse map as nokia bits are inverted on screen
-      if(val == 24 ) val = 23;
-      zero = map( 0, minv,maxv, 24, 0 );
-      if( zero == 24 ) zero = 23;
-  
-      row = ( val >> 3 );
-      zrow = ( zero >> 3 );
-      temp = val - 8*row;     // bit number
-      bdata = 1;
-      while( temp-- ) bdata <<= 1;  // bit mask
-      temp = zero - 8*zrow;
-      bzero = 1;
-      while( temp-- ) bzero <<= 1;
-      if( row == zrow ) bdata |= bzero;   // same byte on screen
-      lcd_goto( row + offset, i );
-      lcd_write( (char) bdata );
-      if( row != zrow ){
-         lcd_goto( zrow + offset, i );
-         lcd_write( (char)bzero );
-      }
-   } 
-}
-*/
-
-/*
-// sampling - called from dsp_core interupt
-void scope(){
-static int last;
-static int i;
-static int mod;
-
-   if( scope_active == 1 ){    // trigger on ch1 rising
-      if( ch1 > last ) scope_active = 2, i = 0;
-      last = ch1;
-   }
-   else if ( scope_active == 2 ){
-      ++mod;
-      mod &= (timebase - 1 );
-      if( mod == 0 ){                    // decimate samples per timebase
-        ch1_data[i] = ch1;
-        if( ch3 != 0 && (i < 5 || i > 74)) ch1_data[i] = ch3; 
-        ch2_data[i++] = ch2;
-        if( i == 80 ) scope_active = 3;  // done
-      }           
-   }
-}
-*/
 
 /*
    these are busy LED's 
@@ -1945,18 +1797,20 @@ int key;           // dah keys transmitter, dit alters the tone
   }    
 }
 
-void paddles(){       /* should be close to CMOS mode B */
+
+/*   old cw keyer code, has contact timing somewhere between A and B 
+void paddles(){       /* should be close to CMOS mode B 
 static int state = 0;
 static int halftime;  // now 1/3 time
 static int mask;
 static int  time_;
 
    switch (state){
-     case 0:          /* handle next element or get a new one */
+     case 0:          /* handle next element or get a new one 
        cel = nel,  nel = 0;  
        if( cel == 0 ) cel = readpaddle();
-       if( cel == (DIT + DAH) ) cel = DIT;  /* dit wins on a tie */
-       if( cel ){     /* key up */
+       if( cel == (DIT + DAH) ) cel = DIT;  /* dit wins on a tie 
+       if( cel ){     /* key up 
           t_up();
           mask= ( DIT + DAH ) ^ cel;
            time_ = 1200/wpm;
@@ -1967,11 +1821,11 @@ static int  time_;
        } 
      break;
      
-     case 1:        /* timing half character */
+     case 1:        /* timing half character 
         if( counter >= halftime ) state = 2;
      break;
         
-     case 2:       /* sample opposite paddle */
+     case 2:       /* sample opposite paddle 
         if( nel == 0 ) nel= readpaddle() & mask;
         if( counter >=  time_ ){
            t_down();
@@ -1981,14 +1835,61 @@ static int  time_;
         }
      break;
         
-     case 3:    /* timing inter element gap */
+     case 3:    /* timing inter element gap 
         if( nel == 0 ) nel= readpaddle() & mask;
         if( counter >=  time_ ) state= 0;
      break;        
-   }  /* end switch */
+   }  /* end switch 
 }
+**********/
 
 
+void paddles( ){            // this function is called once every millisecond
+static int8_t state;
+static int count;
+//static int cel;           // current element  ( globals )
+//static int nel;           // next element - memory
+static int arm;           // edge triggered memory mask
+static int iam;           // level triggered iambic mask
+int pdl;
+
+   pdl = readpaddle();
+   if( count ) --count;
+
+   switch( state ){
+     case 0:                               // idle
+        cel = ( nel ) ? nel : pdl;         // get memory or read the paddles
+        nel = 0;                           // clear memory
+        if( cel == DIT + DAH ) cel = DIT;
+        if( cel == 0 ) break;
+        iam = (DIT+DAH) ^ cel;
+        arm = ( iam ^ pdl ) & iam;         // memory only armed if alternate paddle is not pressed at this time, edge trigger
+                                                    // have set up for mode A
+        if( KMODE == MODE_B ) arm = iam;            // mode B
+        if( KMODE == MODE_U ) iam = cel;            // ultimatic mode
+        
+        count = (1200+WEIGHT)/wpm;
+        if( cel == DAH ) count *= 3;
+        state = 1;
+        t_up();
+     break; 
+     case 1:                                  // timing the current element. look for edge of the other paddle
+        if( count ) nel = ( nel ) ? nel : pdl & arm;
+        else{
+           count = 1200/wpm;
+           state = 2;
+           t_down();
+        }
+     break;   
+     case 2:                                  // timing the inter-element space
+        if( count ) nel = ( nel ) ? nel : pdl & arm;
+        else{
+           nel = ( nel ) ? nel : pdl & iam;   // sample alternate at end of element and element space
+           state = 0;
+        }
+     break;   
+   } 
+}
 
 void mfsk_decode( int val ){
   
@@ -2002,7 +1903,7 @@ void mfsk_decode( int val ){
    mfsk_decode2(val & 3 ); 
 }
 
-// another original decode algorithm by k1urc.  Will it work?
+// another original decode algorithm by KE1MU.  Will it work?
 // each transmitted bit has been spread across 8 bits with the convolution algorithm
 void mfsk_decode2(int val){
 unsigned static int code;   // our best guess at the current 8 bits decoded
@@ -2412,7 +2313,7 @@ static int counter;
 }
 
 
-// a K1URC original decode algorithm - a zero cross is a zero preceeded by 0 to 9 ones.  Anything else is invalid
+// a KE1MU original decode algorithm - a zero cross is a zero preceeded by 0 to 9 ones.  Anything else is invalid
 // not trying to find the center of the baud time, nor recover a clock
 // a phase reversal means we have recieved  0, or 10, 110, 1110, 11110, 111110, 1111110 and so forth
 // this works surprisingly well despite its simplicity
@@ -3007,7 +2908,11 @@ float val2;
   wspr_to_freq( dds_val );
 
   // debug on arduino plotter
-  // Serial.println(val2);
+//  noInterrupts();
+//  int dp = g_dp;
+//  interrupts();
+//  Serial.print( dp );    Serial.write(' ');
+//  Serial.println(val2);
 }
 
 
@@ -4649,12 +4554,105 @@ int spread;
       total_tm = 0;
       return timer + CORE_TICK_RATE/3;                  // vox check only, 3k sample rate 
   }
+
+  // tx_process2( data );                                  // try the usdx audio freq method
    
-  return timer + CORE_TICK_RATE/21;                     // sample rate when transmitting
+  return timer + CORE_TICK_RATE/20;                     // sample rate when transmitting
   
 }
 
 
+/* some routines from usdx, might be able to debug them here
+int valq, vali; 
+#define _UA  5000                     // make same as sample rate
+
+void tx_process2( int data ){
+static uint8_t flip;
+static int prev_phase;
+int phase;
+int dp;
+
+
+   flip = ( flip+1 ) & 3;
+   if( flip ) return;                    // 1/4 rate  !!! slower sample rate has less noise
+                                       // tones above nyquist alias down
+                                       // tones near nyquist create wide band noise, limit cycles or something like that
+                                       // shows need very good low pass to not get near nyquist
+
+   //tx_hilbert( data );                              // get valq and vali
+   process_hilbert( data );
+   phase  = arctan3( vali, valq );
+   dp = phase - prev_phase;                       // delta phase
+   prev_phase = phase;
+   if( dp < -_UA/2 ) dp += _UA;
+   dp = constrain(dp,200,3000);
+   //g_dp = 31*g_dp + dp;
+   //g_dp /= 32;
+   g_dp = dp;                     // see the noise test
+}
+
+int arctan3( int q, int i ){           // from QCX-SSB code
+
+  #define _atan2(z)  (((_UA/8 + _UA/22) - _UA/22 * z ) * z)     //uSDX original derived from equation 5 [1].
+  
+  int r;
+  int ai, aq;
+
+  ai = abs(i);  aq = abs(q);
+  if( aq > ai )   r = _UA / 4 - _atan2( ai / aq );  // arctan(z) = 90-arctan(1/z)
+  else r = (i == 0) ? 0 : _atan2( aq / ai );        // arctan(z)
+  r = (i < 0) ? _UA / 2 - r : r;                    // arctan(-z) = -arctan(z)
+  return (q < 0) ? -r : r;                          // arctan(-z) = -arctan(z)
+}
+
+// try the hilbert from the T3.2 version, window make a difference?
+// a 31 tap classic hilbert every other constant is zero, kaiser window
+static void process_hilbert( int16_t val ){
+static int32_t wi[31];                                // delay terms
+// static int32_t wq[31];                             // extra redundant array
+const int32_t k0 = (int32_t)( 32767.5 * 0.002972769320862211 );
+const int32_t k1 = (int32_t)( 32767.5 * 0.008171666650726522 );
+const int32_t k2 = (int32_t)( 32767.5 * 0.017465643081957562 );
+const int32_t k3 = (int32_t)( 32767.5 * 0.032878923709314147 );
+const int32_t k4 = (int32_t)( 32767.5 * 0.058021930268698417 );
+const int32_t k5 = (int32_t)( 32767.5 * 0.101629404192315698 );
+const int32_t k6 = (int32_t)( 32767.5 * 0.195583262432201366 );
+const int32_t k7 = (int32_t)( 32767.5 * 0.629544595185021816 );
+
+   for( int i = 0; i < 30; ++i )  wi[i] = wi[i+1];      //,  wq[i] = wq[i+1];
+   // wi[30] = wq[30] = val;
+   wi[30] = val;
+
+   valq = wi[15];          // wq[15];
+   vali =  k0 * ( wi[0] - wi[30] ) + k1 * ( wi[2] - wi[28] ) + k2 * ( wi[4] - wi[26] ) + k3 * ( wi[6] - wi[24] );
+   vali += k4 * ( wi[8] - wi[22] ) + k5 * ( wi[10] - wi[20]) + k6 * ( wi[12] - wi[18]) + k7 * ( wi[14] - wi[16]);
+   vali >>= 15;
+
+}
+
+
+
+// 19 tap classic hilbert, no window, also used for RX
+void tx_hilbert( int val ){
+const int16_t k0 = (int16_t)( 256.0 * 0.064724396357330738 );
+const int16_t k1 = (int16_t)( 256.0 * 0.083217089189936755 );
+const int16_t k2 = (int16_t)( 256.0 * 0.116503933432949208 );
+const int16_t k3 = (int16_t)( 256.0 * 0.194173231907191046 );
+const int16_t k4 = (int16_t)( 256.0 * 0.582519710000210189 );
+static int w[19];
+int i;
+int t;
+
+    for( i = 0; i < 18; ++i )  w[i] = w[i+1];
+    w[18] = val;
+    valq = w[9];
+
+    vali = k0 * ( w[0] - w[18] ) + k1 * ( w[2] - w[16] ) + k2 * ( w[4] - w[14] ) + k3 * ( w[6] - w[12] );  //+ k4 * ( w[8] - w[10] );
+    vali >>= 8;
+    t = k4 * ( w[8] - w[10] );
+    vali += (t >> 8);
+}
+*/
 
 /*  core timer function for fft processing */
 /*  calculate the value to return as period in us * 40, or 40000000/freq */
@@ -4958,11 +4956,15 @@ void setup()
 
    set_tuning_rate( fun_selected[1]);  // needs to be before menu or encoder doesn't work
 
-   top_menu(0);
+   //top_menu(0);
+   attachCoreTimerService( dsp_core );
 
 /* implement the defaults */
    set_band_width( fun_selected[0]);
-   update_frequency(DISPLAY_UPDATE);   
+   update_frequency(DISPLAY_UPDATE);
+   Serial.begin(BAUDRATE);   
+
+   if( mode == DIGI ) digi_setup();    // enable only if default mode is digi
    
 }  // end setup
 
@@ -5638,7 +5640,7 @@ long mod;
     return 0;
 }
 
-// !!! fix attach detach for new modes
+
 void memory_tune(){     // cycle through the wefax memory channels
 int i;
 int new_band;
@@ -5673,12 +5675,15 @@ static int counts;      // slow down the encoder
    mode_offset = ( sideband == USB ) ? -memory[channel].offset : memory[channel].offset;
    
    if( old_mode != mode ){
+      if( old_mode == WSPR ) detachCoreTimerService( wspr_core );
       if( old_mode == PSK31 ) detachCoreTimerService( psk_mod_core );
       if( old_mode == MFSK ) detachCoreTimerService( mfsk_core );
       if( old_mode == HELL ) detachCoreTimerService( feld_hell_core );
+      if( old_mode == DIGI ) detachCoreTimerService( digi_core );
       if( mode == HELL ) attachCoreTimerService( feld_hell_core );
       if( mode == PSK31 ) attachCoreTimerService( psk_mod_core );
       if( mode == MFSK ) attachCoreTimerService( mfsk_core );
+      if( mode == DIGI ) attachCoreTimerService( digi_core );
    }
    fun_selected[0] = ( mode > MFSK ) ? WIDE : MEDIUM ;   // set wide or medium bandwidth
    
@@ -6170,6 +6175,156 @@ int d;
    stage_str("\r\n   };");
 }
 #endif
+
+
+/*
+void scope_display(){
+int active;
+
+   active = scope_active + 1;
+   if( active == 4 ) scope_display1();
+   else if( active == 5 ) scope_display2();
+   else if( active == 6 ) active = 0;
+  
+   scope_active = active;
+   if( active == 0 ){
+     LCD.clrScr();
+     tuning_display();    
+   } 
+}
+
+int max1,max2;
+int min1,min2;
+
+void scope_display2(){   // graph
+int gmax,gmin;
+
+  timeout_ok = 2;
+  scope_active = 3;      // allow screen writes for this function
+  LCD.clrScr();
+//  gmax = ( max1 > max2 ) ? max1 : max2;
+//  gmin = ( min1 < min2 ) ? min1 : min2;
+//  if( gmin > 0 ) gmin = 0;
+//  if( gmax < 0 ) gmax = 0;
+  gmax = ( max1 < 0 ) ? 0 : max1;
+  gmin = ( min1 > 0 ) ? 0 : min1;
+  scope_graph( gmin,gmax,ch1_data,0 );
+  
+  gmax = ( max2 < 0 ) ? 0 : max2;
+  gmin = ( min2 > 0 ) ? 0 : min2;
+  scope_graph( gmin,gmax,ch2_data,3 );
+}
+
+void scope_display1(){   // data summary
+int i;
+int ave1,ave2;
+char buf[35];
+
+  scope_active = 3;     // sllow screen writes
+  LCD.clrScr();
+  ave1 = ave2 = 0;
+  max1 = max2 = -9999999;
+  min1 = min2 =  9999999;
+  for( i = 0; i < 80; ++i ){
+    ave1 += ch1_data[i];
+    ave2 += ch2_data[i];
+    if( ch1_data[i] > max1 ) max1 = ch1_data[i];
+    if( ch2_data[i] > max2 ) max2 = ch2_data[i];
+    if( ch1_data[i] < min1 ) min1 = ch1_data[i];
+    if( ch2_data[i] < min2 ) min2 = ch2_data[i];
+  }
+  ave1 /= 80;
+  ave2 /= 80;
+  
+  lcd_goto(0,0);
+  lcd_puts("max ");
+  itoa(max1,buf,10);
+  lcd_puts(buf);
+
+  lcd_goto(1,0);
+  lcd_puts("min ");
+  itoa(min1,buf,10);
+  lcd_puts(buf);
+  
+  lcd_goto(2,0);
+  lcd_puts("ave ");
+  itoa(ave1,buf,10);
+  lcd_puts(buf);
+
+  lcd_goto(3,0);
+  lcd_puts("max ");
+  itoa(max2,buf,10);
+  lcd_puts(buf);
+
+  lcd_goto(4,0);
+  lcd_puts("min ");
+  itoa(min2,buf,10);
+  lcd_puts(buf);
+
+  lcd_goto(5,0);
+  lcd_puts("ave ");
+  itoa(ave2,buf,10);
+  lcd_puts(buf);
+  
+}
+
+void scope_graph( int minv, int maxv, int vals[], int offset ){
+int val;
+int i;
+int zero;
+int row, zrow;
+int bdata, bzero;
+int temp;
+   
+   if( minv == maxv ) return;    // divide by zero in map ??
+   for( i = 0; i < 80; ++i ){
+      val = map( vals[i], minv, maxv, 24, 0 );   // inverse map as nokia bits are inverted on screen
+      if(val == 24 ) val = 23;
+      zero = map( 0, minv,maxv, 24, 0 );
+      if( zero == 24 ) zero = 23;
+  
+      row = ( val >> 3 );
+      zrow = ( zero >> 3 );
+      temp = val - 8*row;     // bit number
+      bdata = 1;
+      while( temp-- ) bdata <<= 1;  // bit mask
+      temp = zero - 8*zrow;
+      bzero = 1;
+      while( temp-- ) bzero <<= 1;
+      if( row == zrow ) bdata |= bzero;   // same byte on screen
+      lcd_goto( row + offset, i );
+      lcd_write( (char) bdata );
+      if( row != zrow ){
+         lcd_goto( zrow + offset, i );
+         lcd_write( (char)bzero );
+      }
+   } 
+}
+*/
+
+/*
+// sampling - called from dsp_core interupt
+void scope(){
+static int last;
+static int i;
+static int mod;
+
+   if( scope_active == 1 ){    // trigger on ch1 rising
+      if( ch1 > last ) scope_active = 2, i = 0;
+      last = ch1;
+   }
+   else if ( scope_active == 2 ){
+      ++mod;
+      mod &= (timebase - 1 );
+      if( mod == 0 ){                    // decimate samples per timebase
+        ch1_data[i] = ch1;
+        if( ch3 != 0 && (i < 5 || i > 74)) ch1_data[i] = ch3; 
+        ch2_data[i++] = ch2;
+        if( i == 80 ) scope_active = 3;  // done
+      }           
+   }
+}
+*/
 
 
 
